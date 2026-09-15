@@ -20,8 +20,12 @@ jobs:
 
       - name: Pick random sample URLs
         run: |
-          shuf -n 20 download_list.txt > selected_game1.txt
-          shuf -n 20 yolo_download_list.txt > selected_game2.txt
+          shuf -n 4 download_list.txt > selected_game1.txt
+          shuf -n 4 yolo_download_list.txt > selected_game2.txt
+          echo "== Game 1 samples =="
+          cat selected_game1.txt
+          echo "== Game 2 samples =="
+          cat selected_game2.txt
 
       - name: Download Game 1 samples
         run: |
@@ -83,7 +87,7 @@ jobs:
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
           echo "sdkmanager_path=$SDKMANAGER" >> $GITHUB_ENV
-      
+
       - name: Build debug APK
         working-directory: android
         run: |
