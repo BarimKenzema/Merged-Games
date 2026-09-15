@@ -8,7 +8,7 @@ function saveGlobal(g){ localStorage.setItem('hog_global', JSON.stringify(g)); }
 let manifest = null;
 let cameFrom = 'menu';
 let levelPage = 0;
-const PER_PAGE = 8;
+const PER_PAGE = 16;
 
 const screens = ['screenMenu','screenLevelSelect','screenGame'];
 function showScreen(id){
@@ -173,6 +173,37 @@ function applyTransform(){
 }
 function getTouchDist(t){ const dx=t[0].clientX-t[1].clientX, dy=t[0].clientY-t[1].clientY; return Math.sqrt(dx*dx+dy*dy); }
 
+// Clamps viewState.x/y so the zoomed canvas can never drift off past its own
+// content edges, and automatically re-centers when the (possibly zoomed-out)
+// content is smaller than the viewport on a given axis. This fixes the bug
+// where zooming back out left the view permanently off-center.
+function clampPan(){
+  const area = document.getElementById('gameArea');
+  const areaW = area.clientWidth, areaH = area.clientHeight;
+  const W = parseFloat(canvas.style.width);
+  const H = parseFloat(canvas.style.height);
+  const s = viewState.scale;
+  // gameArea centers the unscaled canvas via flexbox; this is that natural offset.
+  const flexOffsetX = (areaW - W) / 2;
+  const flexOffsetY = (areaH - H) / 2;
+  const scaledW = W * s, scaledH = H * s;
+
+  if (scaledW <= areaW) {
+    viewState.x = (areaW - scaledW) / 2 - flexOffsetX;
+  } else {
+    const minX = areaW - flexOffsetX - scaledW;
+    const maxX = -flexOffsetX;
+    viewState.x = Math.max(minX, Math.min(maxX, viewState.x));
+  }
+  if (scaledH <= areaH) {
+    viewState.y = (areaH - scaledH) / 2 - flexOffsetY;
+  } else {
+    const minY = areaH - flexOffsetY - scaledH;
+    const maxY = -flexOffsetY;
+    viewState.y = Math.max(minY, Math.min(maxY, viewState.y));
+  }
+}
+
 canvas.addEventListener('touchstart', e => {
   didMove=false;
   if (e.touches.length===2){ touchStartDist=getTouchDist(e.touches); touchStartScale=viewState.scale; }
@@ -183,10 +214,12 @@ canvas.addEventListener('touchmove', e => {
   if (e.touches.length===2 && touchStartDist){
     let s = touchStartScale*(getTouchDist(e.touches)/touchStartDist);
     viewState.scale = Math.max(1, Math.min(4,s));
+    clampPan();
     applyTransform();
   } else if (e.touches.length===1 && panStart && viewState.scale>1){
     viewState.x = e.touches[0].clientX - panStart.x;
     viewState.y = e.touches[0].clientY - panStart.y;
+    clampPan();
     applyTransform();
   }
 }, {passive:true});
@@ -332,11 +365,33 @@ function startFoundAnimation(item){
   setTimeout(() => { fly.remove(); finalizeFound(item.index); }, 190+470);
 }
 
+// Moves a tray item to the end of the tray row with a smooth slide animation
+// (FLIP technique: record position before the DOM move, then animate away
+// the visual jump). Makes found items settle at the end so remaining items
+// are easier to scan.
+function moveTrayItemToEnd(trayEl){
+  const firstRect = trayEl.getBoundingClientRect();
+  trayDiv.appendChild(trayEl);
+  const lastRect = trayEl.getBoundingClientRect();
+  const dx = firstRect.left - lastRect.left;
+  if (dx !== 0){
+    trayEl.style.transition = 'none';
+    trayEl.style.transform = `translateX(${dx}px)`;
+    requestAnimationFrame(() => {
+      trayEl.style.transition = 'transform 0.35s ease';
+      trayEl.style.transform = 'translateX(0)';
+    });
+  }
+}
+
 function finalizeFound(index){
   gs.pending.delete(index);
   gs.found.add(index);
   const trayEl = document.getElementById('tray_'+index);
-  if (trayEl) trayEl.classList.add('found');
+  if (trayEl) {
+    trayEl.classList.add('found');
+    moveTrayItemToEnd(trayEl);
+  }
   render();
   if (gs.found.size === gs.puzzleData.items.length) setTimeout(showWin, 250);
 }
