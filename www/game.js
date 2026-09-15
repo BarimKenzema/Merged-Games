@@ -8,6 +8,12 @@ const state = {
   maxLives: 5
 };
 
+let viewState = { scale: 1, x: 0, y: 0 };
+let touchStartDist = null;
+let touchStartScale = 1;
+let panStart = null;
+let didMove = false;
+
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const heartsDiv = document.getElementById('hearts');
@@ -53,6 +59,7 @@ async function loadPuzzle(index){
   canvas.width = state.puzzleData.canvas_width;
   canvas.height = state.puzzleData.canvas_height;
   fitCanvas();
+  resetView();
 
   puzzleLabel.textContent = `Puzzle ${index+1} / ${state.manifest.puzzles.length}`;
   buildHearts();
@@ -68,7 +75,50 @@ function fitCanvas(){
   canvas.style.width = (canvas.width * scale) + 'px';
   canvas.style.height = (canvas.height * scale) + 'px';
 }
-window.addEventListener('resize', fitCanvas);
+window.addEventListener('resize', () => { fitCanvas(); resetView(); });
+
+function resetView(){
+  viewState = {scale:1, x:0, y:0};
+  applyTransform();
+}
+function applyTransform(){
+  canvas.style.transformOrigin = '0 0';
+  canvas.style.transform = `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.scale})`;
+}
+function getTouchDist(t){
+  const dx = t[0].clientX - t[1].clientX;
+  const dy = t[0].clientY - t[1].clientY;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+canvas.addEventListener('touchstart', (e) => {
+  didMove = false;
+  if (e.touches.length === 2) {
+    touchStartDist = getTouchDist(e.touches);
+    touchStartScale = viewState.scale;
+  } else if (e.touches.length === 1) {
+    panStart = { x: e.touches[0].clientX - viewState.x, y: e.touches[0].clientY - viewState.y };
+  }
+}, {passive:true});
+
+canvas.addEventListener('touchmove', (e) => {
+  didMove = true;
+  if (e.touches.length === 2 && touchStartDist) {
+    const newDist = getTouchDist(e.touches);
+    let newScale = touchStartScale * (newDist / touchStartDist);
+    newScale = Math.max(1, Math.min(4, newScale));
+    viewState.scale = newScale;
+    applyTransform();
+  } else if (e.touches.length === 1 && panStart && viewState.scale > 1) {
+    viewState.x = e.touches[0].clientX - panStart.x;
+    viewState.y = e.touches[0].clientY - panStart.y;
+    applyTransform();
+  }
+}, {passive:true});
+
+canvas.addEventListener('touchend', (e) => {
+  if (e.touches.length === 0) { touchStartDist = null; panStart = null; }
+});
 
 function buildHearts(){
   heartsDiv.innerHTML = '';
@@ -201,6 +251,7 @@ nextBtn.addEventListener('click', async () => {
 retryBtn.addEventListener('click', async () => { await loadPuzzle(state.currentIndex); });
 
 canvas.addEventListener('click', (e) => {
+  if (didMove) { didMove = false; return; }
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
