@@ -9,6 +9,10 @@ def parse_sprite_name(name):
     if n.lower().endswith('.png'):
         n = n[:-4]
     parts = n.split('_')
+    is_shadow_variant = False
+    if parts and parts[-1] == 'shadow':
+        is_shadow_variant = True
+        parts = parts[:-1]
     if len(parts) < 5:
         return None
     level_id = parts[0]
@@ -27,6 +31,8 @@ def parse_sprite_name(name):
         layer = int(parts[4][1:])
     except Exception:
         return None
+    if is_shadow_variant:
+        item_type = item_type + 'shadow'
     return {
         "level_id": level_id, "item_type": item_type, "item_number": item_number,
         "rotation": rotation, "x": x, "y": y, "layer": layer, "name": name
@@ -50,6 +56,23 @@ def make_bg_preview(source_img, rect, out_path, max_dim=1000):
     resized = cropped.resize(new_size, Image.LANCZOS) if scale < 1.0 else cropped
     resized.save(out_path, "JPEG", quality=85)
 
+def resolve_polygon(path_id, mono_by_pathid, depth=0):
+    """Returns (poly_tree, hops). hops=0 means the object referenced directly by
+    hiddenPoints[i] already contains polygonPoints (older-format levels, e.g. 30109).
+    hops>=1 means we had to follow an 'item' indirection to find it (newer-format
+    levels, e.g. 30680). CONFIRMED: the hop count determines which Y-sign convention
+    that item needs — the two level formats use OPPOSITE conventions for item Y."""
+    if depth > 3:
+        return None, None
+    tree = mono_by_pathid.get(path_id)
+    if tree is None:
+        return None, None
+    if 'polygonPoints' in tree:
+        return tree, depth
+    if 'item' in tree and isinstance(tree['item'], dict) and 'm_PathID' in tree['item']:
+        return resolve_polygon(tree['item']['m_PathID'], mono_by_pathid, depth+1)
+    return None, None
+
 def convert_one(bundle_path, out_root):
     level_id = os.path.basename(bundle_path)
     env = UnityPy.load(bundle_path)
@@ -61,7 +84,8 @@ def convert_one(bundle_path, out_root):
     w, h = tex.m_Width, tex.m_Height
     raw = tex.image_data
     decoded = texture2ddecoder.decode_astc(raw, w, h, 10, 10)
-    atlas = Image.frombytes('RGBA', (w, h), decoded)
+    # CONFIRMED FIX: must specify BGRA channel order, plain 'RGBA' gives wrong colors
+    atlas = Image.frombytes('RGBA', (w, h), decoded, 'raw', 'BGRA')
     atlas = atlas.transpose(Image.FLIP_TOP_BOTTOM)
     atlas_h = atlas.height
 
@@ -69,20 +93,21 @@ def convert_one(bundle_path, out_root):
     for obj in env.objects:
         if obj.type.name == "Sprite":
             d = obj.read()
-            r = d.m_Rect
-            x, y, sw, sh = int(r.x), int(r.y), int(r.width), int(r.height)
+            # CONFIRMED FIX: use m_RD.textureRect, NOT m_Rect (m_Rect can be stale/untrimmed
+            # and causes duplicate-ghost/scrambled crops on heavily-trimmed atlases)
+            r = d.m_RD.textureRect
+            x, y, sw, sh = int(round(r.x)), int(round(r.y)), int(round(r.width)), int(round(r.height))
             top = atlas_h - y - sh
             sprite_rects[d.m_Name] = [x, top, sw, sh]
 
     level_tree = None
-    mono_polys = {}
+    mono_by_pathid = {}
     for obj in env.objects:
         if obj.type.name == "MonoBehaviour":
             tree = obj.read_typetree()
+            mono_by_pathid[obj.path_id] = tree
             if 'hiddenPoints' in tree and 'decorPoints' in tree:
                 level_tree = tree
-            elif 'polygonPoints' in tree:
-                mono_polys[obj.path_id] = tree
 
     if level_tree is None:
         raise ValueError("No Level data found")
@@ -112,7 +137,7 @@ def convert_one(bundle_path, out_root):
             continue
         sprite_name, info = sprite_by_type_num[key]
         path_id = ref['m_PathID']
-        poly_data = mono_polys.get(path_id)
+        poly_data, hops = resolve_polygon(path_id, mono_by_pathid)
         if poly_data is None:
             continue
         polygon_pixels = [
@@ -120,7 +145,13 @@ def convert_one(bundle_path, out_root):
             for p in poly_data['polygonPoints']
         ]
         final_x = canvas_w / 2 + info['x']
-        final_y = canvas_h / 2 - info['y']
+        # CONFIRMED FIX: older-format levels (hops==0) need item Y flipped;
+        # newer-format levels (hops>=1) need item Y NOT flipped (same convention
+        # as decor/shadow in that format).
+        if hops == 0:
+            final_y = canvas_h / 2 - info['y']
+        else:
+            final_y = canvas_h / 2 + info['y']
         items.append({
             "index": i,
             "sprite_rect": sprite_rects[sprite_name],
@@ -135,10 +166,11 @@ def convert_one(bundle_path, out_root):
     decor = []
     for name in sprite_rects:
         info = parse_sprite_name(name)
-        if not info or info['item_type'] not in ('decor', 's'):
+        if not info or info['item_type'] not in ('decor', 's', 'hshadow'):
             continue
         final_x = canvas_w / 2 + info['x']
-        final_y = canvas_h / 2 - info['y']
+        # CONFIRMED FIX: decor/shadow Y is NOT flipped
+        final_y = canvas_h / 2 + info['y']
         decor.append({
             "sprite_rect": sprite_rects[name],
             "x": final_x,
@@ -170,7 +202,7 @@ def convert_one(bundle_path, out_root):
     with open(os.path.join(out_dir, "data.json"), 'w') as f:
         json.dump(data, f)
 
-    print(f"Converted {bundle_path} -> {out_dir}")
+    print(f"Converted {bundle_path} -> {out_dir}  (items={len(items)}, decor={len(decor)})")
 
 if __name__ == "__main__":
     raw_dir = sys.argv[1]
