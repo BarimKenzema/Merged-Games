@@ -1,7 +1,7 @@
 function loadGlobal(){
   const raw = localStorage.getItem('hog_global');
   if (raw) { try { return JSON.parse(raw); } catch(e) {} }
-  return { hintCharges: 3, highestUnlockedIndex: 0, lastPlayedIndex: 0, completedIds: [] };
+  return { hintCharges: 99, highestUnlockedIndex: 0, lastPlayedIndex: 0, completedIds: [] };
 }
 function saveGlobal(g){ localStorage.setItem('hog_global', JSON.stringify(g)); }
 
@@ -110,6 +110,7 @@ const gs = {
 };
 let viewState = { scale:1, x:0, y:0 };
 let touchStartDist=null, touchStartScale=1, panStart=null, didMove=false;
+let pinchStartRect=null, pinchStartViewX=0, pinchStartViewY=0;
 let glowInterval = null;
 
 const canvas = document.getElementById('gameCanvas');
@@ -160,7 +161,11 @@ async function openGame(index){
 
 function fitCanvas(){
   const area = document.getElementById('gameArea');
-  const scale = Math.min(area.clientWidth/canvas.width, area.clientHeight/canvas.height);
+  // COVER-FIT (was Math.min = contain-fit, which left letterboxing dead space
+  // above/below since puzzle images are usually a different aspect ratio than
+  // the phone screen). Math.max crops the edges instead of leaving empty bars;
+  // pinch-zoom/pan lets the player reach the cropped edges.
+  const scale = Math.max(area.clientWidth/canvas.width, area.clientHeight/canvas.height);
   canvas.style.width = (canvas.width*scale)+'px';
   canvas.style.height = (canvas.height*scale)+'px';
 }
@@ -172,18 +177,18 @@ function applyTransform(){
   canvas.style.transform = `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.scale})`;
 }
 function getTouchDist(t){ const dx=t[0].clientX-t[1].clientX, dy=t[0].clientY-t[1].clientY; return Math.sqrt(dx*dx+dy*dy); }
+function getMidpoint(t){ return { x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2 }; }
 
 // Clamps viewState.x/y so the zoomed canvas can never drift off past its own
-// content edges, and automatically re-centers when the (possibly zoomed-out)
-// content is smaller than the viewport on a given axis. This fixes the bug
-// where zooming back out left the view permanently off-center.
+// content edges, and re-centers when content is smaller than the viewport
+// on a given axis (shouldn't normally happen now with cover-fit, but kept
+// as a safety net).
 function clampPan(){
   const area = document.getElementById('gameArea');
   const areaW = area.clientWidth, areaH = area.clientHeight;
   const W = parseFloat(canvas.style.width);
   const H = parseFloat(canvas.style.height);
   const s = viewState.scale;
-  // gameArea centers the unscaled canvas via flexbox; this is that natural offset.
   const flexOffsetX = (areaW - W) / 2;
   const flexOffsetY = (areaH - H) / 2;
   const scaledW = W * s, scaledH = H * s;
@@ -206,24 +211,38 @@ function clampPan(){
 
 canvas.addEventListener('touchstart', e => {
   didMove=false;
-  if (e.touches.length===2){ touchStartDist=getTouchDist(e.touches); touchStartScale=viewState.scale; }
+  if (e.touches.length===2){
+    touchStartDist=getTouchDist(e.touches);
+    touchStartScale=viewState.scale;
+    pinchStartRect = canvas.getBoundingClientRect();
+    pinchStartViewX = viewState.x;
+    pinchStartViewY = viewState.y;
+  }
   else if (e.touches.length===1){ panStart={x:e.touches[0].clientX-viewState.x, y:e.touches[0].clientY-viewState.y}; }
 }, {passive:true});
 canvas.addEventListener('touchmove', e => {
   didMove=true;
   if (e.touches.length===2 && touchStartDist){
-    let s = touchStartScale*(getTouchDist(e.touches)/touchStartDist);
-    viewState.scale = Math.max(1, Math.min(4,s));
+    // CONFIRMED FIX: zoom now anchors around the pinch midpoint instead of
+    // always zooming toward the top-left. Standard formula: keep the local
+    // (unscaled) point under the fingers fixed on screen as scale changes.
+    const newScale = Math.max(1, Math.min(4, touchStartScale*(getTouchDist(e.touches)/touchStartDist)));
+    const mid = getMidpoint(e.touches);
+    const localX = (mid.x - pinchStartRect.left) / touchStartScale;
+    const localY = (mid.y - pinchStartRect.top) / touchStartScale;
+    viewState.x = mid.x - pinchStartRect.left + pinchStartViewX - newScale*localX;
+    viewState.y = mid.y - pinchStartRect.top + pinchStartViewY - newScale*localY;
+    viewState.scale = newScale;
     clampPan();
     applyTransform();
-  } else if (e.touches.length===1 && panStart && viewState.scale>1){
+  } else if (e.touches.length===1 && panStart){
     viewState.x = e.touches[0].clientX - panStart.x;
     viewState.y = e.touches[0].clientY - panStart.y;
     clampPan();
     applyTransform();
   }
 }, {passive:true});
-canvas.addEventListener('touchend', e => { if (e.touches.length===0){ touchStartDist=null; panStart=null; } });
+canvas.addEventListener('touchend', e => { if (e.touches.length===0){ touchStartDist=null; panStart=null; pinchStartRect=null; } });
 
 function buildHearts(){
   heartsDiv.innerHTML='';
@@ -283,7 +302,15 @@ function render(){
   ctx.drawImage(gs.atlasImg, bg[0], bg[1], bg[2], bg[3], 0, 0, canvas.width, canvas.height);
 
   let drawList = [];
-  gs.puzzleData.decor.forEach(d => drawList.push({type:'decor', zOrder:d.zOrder, data:d}));
+  gs.puzzleData.decor.forEach(d => {
+    // CONFIRMED FIX: hide a hidden-item's shadow once that item is found or
+    // mid-find-animation, instead of leaving it drawn forever.
+    if (d.linked_item_index !== undefined &&
+        (gs.found.has(d.linked_item_index) || gs.pending.has(d.linked_item_index))) {
+      return;
+    }
+    drawList.push({type:'decor', zOrder:d.zOrder, data:d});
+  });
   gs.puzzleData.items.forEach(it => {
     if (!gs.found.has(it.index) && !gs.pending.has(it.index)) drawList.push({type:'item', zOrder:it.zOrder, data:it});
   });
@@ -365,10 +392,6 @@ function startFoundAnimation(item){
   setTimeout(() => { fly.remove(); finalizeFound(item.index); }, 190+470);
 }
 
-// Moves a tray item to the end of the tray row with a smooth slide animation
-// (FLIP technique: record position before the DOM move, then animate away
-// the visual jump). Makes found items settle at the end so remaining items
-// are easier to scan.
 function moveTrayItemToEnd(trayEl){
   const firstRect = trayEl.getBoundingClientRect();
   trayDiv.appendChild(trayEl);
@@ -409,7 +432,7 @@ function showWin(){
   if (gs.levelIndex >= g.highestUnlockedIndex) {
     g.highestUnlockedIndex = Math.min(gs.levelIndex+1, manifest.puzzles.length-1);
   }
-  if (gs.lives === gs.maxLives) g.hintCharges = Math.min(9, g.hintCharges+1);
+  if (gs.lives === gs.maxLives) g.hintCharges = Math.min(99, g.hintCharges+1);
   saveGlobal(g);
   updateHintBadge();
   stopGlow();
