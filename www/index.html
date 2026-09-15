@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Hidden Object Game</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="topbar">
+  <div id="hearts"></div>
+  <div id="puzzleLabel"></div>
+</div>
+<div id="gameArea">
+  <canvas id="gameCanvas"></canvas>
+</div>
+<div id="trayRow"></div>
+<div id="winOverlay" class="hidden">
+  <h1>Puzzle Complete!</h1>
+  <button id="nextBtn">Next Puzzle</button>
+</div>
+<div id="loseOverlay" class="hidden">
+  <h1>Out of Lives!</h1>
+  <button id="retryBtn">Retry Puzzle</button>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
