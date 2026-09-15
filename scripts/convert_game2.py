@@ -32,13 +32,23 @@ def parse_sprite_name(name):
         "rotation": rotation, "x": x, "y": y, "layer": layer, "name": name
     }
 
-def make_thumbnail_from_atlas(atlas_img, rect, out_path, max_w=320):
+def make_square_thumbnail(source_img, rect, out_path, size=400, pad_color=(34,34,34)):
     x, y, w, h = rect
-    cropped = atlas_img.crop((x, y, x + w, y + h)).convert("RGB")
-    ratio = max_w / w
-    new_size = (max_w, max(1, int(h * ratio)))
-    thumb = cropped.resize(new_size, Image.LANCZOS)
-    thumb.save(out_path, "JPEG", quality=75)
+    cropped = source_img.crop((x, y, x + w, y + h)).convert("RGB")
+    scale = min(size / w, size / h)
+    new_w, new_h = max(1, int(w*scale)), max(1, int(h*scale))
+    resized = cropped.resize((new_w, new_h), Image.LANCZOS)
+    canvas = Image.new("RGB", (size, size), pad_color)
+    canvas.paste(resized, ((size-new_w)//2, (size-new_h)//2))
+    canvas.save(out_path, "JPEG", quality=80)
+
+def make_bg_preview(source_img, rect, out_path, max_dim=1000):
+    x, y, w, h = rect
+    cropped = source_img.crop((x, y, x + w, y + h)).convert("RGB")
+    scale = min(1.0, max_dim / max(w, h))
+    new_size = (max(1,int(w*scale)), max(1,int(h*scale)))
+    resized = cropped.resize(new_size, Image.LANCZOS) if scale < 1.0 else cropped
+    resized.save(out_path, "JPEG", quality=85)
 
 def convert_one(bundle_path, out_root):
     level_id = os.path.basename(bundle_path)
@@ -142,14 +152,15 @@ def convert_one(bundle_path, out_root):
     os.makedirs(out_dir, exist_ok=True)
     atlas.save(os.path.join(out_dir, "atlas.png"))
 
-    thumb_path = os.path.join(out_dir, "thumb.jpg")
-    make_thumbnail_from_atlas(atlas, bg_rect, thumb_path)
+    make_square_thumbnail(atlas, bg_rect, os.path.join(out_dir, "thumb.jpg"))
+    make_bg_preview(atlas, bg_rect, os.path.join(out_dir, "bg.jpg"))
 
     data = {
         "puzzle_id": puzzle_folder_name,
         "source_game": "game2",
         "atlas": "atlas.png",
         "thumbnail": "thumb.jpg",
+        "background": "bg.jpg",
         "canvas_width": canvas_w,
         "canvas_height": canvas_h,
         "background_rect": bg_rect,
