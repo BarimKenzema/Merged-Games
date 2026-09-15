@@ -32,6 +32,14 @@ def parse_sprite_name(name):
         "rotation": rotation, "x": x, "y": y, "layer": layer, "name": name
     }
 
+def make_thumbnail_from_atlas(atlas_img, rect, out_path, max_w=320):
+    x, y, w, h = rect
+    cropped = atlas_img.crop((x, y, x + w, y + h)).convert("RGB")
+    ratio = max_w / w
+    new_size = (max_w, max(1, int(h * ratio)))
+    thumb = cropped.resize(new_size, Image.LANCZOS)
+    thumb.save(out_path, "JPEG", quality=75)
+
 def convert_one(bundle_path, out_root):
     level_id = os.path.basename(bundle_path)
     env = UnityPy.load(bundle_path)
@@ -134,10 +142,14 @@ def convert_one(bundle_path, out_root):
     os.makedirs(out_dir, exist_ok=True)
     atlas.save(os.path.join(out_dir, "atlas.png"))
 
+    thumb_path = os.path.join(out_dir, "thumb.jpg")
+    make_thumbnail_from_atlas(atlas, bg_rect, thumb_path)
+
     data = {
         "puzzle_id": puzzle_folder_name,
         "source_game": "game2",
         "atlas": "atlas.png",
+        "thumbnail": "thumb.jpg",
         "canvas_width": canvas_w,
         "canvas_height": canvas_h,
         "background_rect": bg_rect,
