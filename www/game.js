@@ -5,6 +5,11 @@ function loadGlobal(){
 }
 function saveGlobal(g){ localStorage.setItem('hog_global', JSON.stringify(g)); }
 
+function debugLog(msg){
+  const el = document.getElementById('debugFound');
+  if (el) el.textContent = msg;
+}
+
 let manifest = null;
 let cameFrom = 'menu';
 let levelPage = 0;
@@ -136,6 +141,8 @@ async function openGame(index){
   gs.pending = new Set();
   gs.lives = gs.maxLives;
 
+  document.getElementById('gameAreaBg').style.backgroundImage = `url(puzzles/${entry.puzzle_id}/${gs.puzzleData.background})`;
+
   const img = new Image();
   await new Promise((resolve,reject) => {
     img.onload = resolve; img.onerror = reject;
@@ -156,16 +163,17 @@ async function openGame(index){
   buildTray();
   updateHintBadge();
   startGlow();
+  debugLog(`Puzzle: ${entry.puzzle_id}  items: ${gs.puzzleData.items.length}  found: []`);
   render();
 }
 
 function fitCanvas(){
   const area = document.getElementById('gameArea');
-  // COVER-FIT (was Math.min = contain-fit, which left letterboxing dead space
-  // above/below since puzzle images are usually a different aspect ratio than
-  // the phone screen). Math.max crops the edges instead of leaving empty bars;
-  // pinch-zoom/pan lets the player reach the cropped edges.
-  const scale = Math.max(area.clientWidth/canvas.width, area.clientHeight/canvas.height);
+  // CONTAIN-FIT: whole puzzle visible at 1x zoom (matches original game
+  // behavior - fully zoomed out shows entire puzzle with no swiping needed).
+  // Any letterboxed space is filled by the blurred #gameAreaBg layer behind
+  // the canvas, same trick already used successfully on the menu screen.
+  const scale = Math.min(area.clientWidth/canvas.width, area.clientHeight/canvas.height);
   canvas.style.width = (canvas.width*scale)+'px';
   canvas.style.height = (canvas.height*scale)+'px';
 }
@@ -179,10 +187,6 @@ function applyTransform(){
 function getTouchDist(t){ const dx=t[0].clientX-t[1].clientX, dy=t[0].clientY-t[1].clientY; return Math.sqrt(dx*dx+dy*dy); }
 function getMidpoint(t){ return { x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2 }; }
 
-// Clamps viewState.x/y so the zoomed canvas can never drift off past its own
-// content edges, and re-centers when content is smaller than the viewport
-// on a given axis (shouldn't normally happen now with cover-fit, but kept
-// as a safety net).
 function clampPan(){
   const area = document.getElementById('gameArea');
   const areaW = area.clientWidth, areaH = area.clientHeight;
@@ -223,9 +227,6 @@ canvas.addEventListener('touchstart', e => {
 canvas.addEventListener('touchmove', e => {
   didMove=true;
   if (e.touches.length===2 && touchStartDist){
-    // CONFIRMED FIX: zoom now anchors around the pinch midpoint instead of
-    // always zooming toward the top-left. Standard formula: keep the local
-    // (unscaled) point under the fingers fixed on screen as scale changes.
     const newScale = Math.max(1, Math.min(4, touchStartScale*(getTouchDist(e.touches)/touchStartDist)));
     const mid = getMidpoint(e.touches);
     const localX = (mid.x - pinchStartRect.left) / touchStartScale;
@@ -303,16 +304,18 @@ function render(){
 
   let drawList = [];
   gs.puzzleData.decor.forEach(d => {
-    // CONFIRMED FIX: hide a hidden-item's shadow once that item is found or
-    // mid-find-animation, instead of leaving it drawn forever.
     if (d.linked_item_index !== undefined &&
         (gs.found.has(d.linked_item_index) || gs.pending.has(d.linked_item_index))) {
       return;
     }
     drawList.push({type:'decor', zOrder:d.zOrder, data:d});
   });
+  const drawnItemIndices = [];
   gs.puzzleData.items.forEach(it => {
-    if (!gs.found.has(it.index) && !gs.pending.has(it.index)) drawList.push({type:'item', zOrder:it.zOrder, data:it});
+    if (!gs.found.has(it.index) && !gs.pending.has(it.index)) {
+      drawList.push({type:'item', zOrder:it.zOrder, data:it});
+      drawnItemIndices.push(it.index);
+    }
   });
   drawList.sort((a,b) => a.zOrder-b.zOrder);
 
@@ -324,6 +327,8 @@ function render(){
     ctx.drawImage(gs.atlasImg, rect[0], rect[1], rect[2], rect[3], -rect[2]/2, -rect[3]/2, rect[2], rect[3]);
     ctx.restore();
   });
+
+  debugLog(`found: [${[...gs.found].join(',')}]  pending: [${[...gs.pending].join(',')}]  stillDrawnItems: [${drawnItemIndices.join(',')}]`);
 }
 
 function pointInPolygon(px,py,poly){
@@ -348,8 +353,10 @@ function handleClick(clickX, clickY){
   }
   if (candidates.length){
     candidates.sort((a,b) => b.zOrder-a.zOrder);
+    debugLog(`Clicked (${clickX.toFixed(0)},${clickY.toFixed(0)}) -> matched item index ${candidates[0].index} (of ${candidates.length} candidates)`);
     startFoundAnimation(candidates[0]);
   } else {
+    debugLog(`Clicked (${clickX.toFixed(0)},${clickY.toFixed(0)}) -> no match (miss)`);
     registerMiss();
   }
 }
