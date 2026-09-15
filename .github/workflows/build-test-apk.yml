@@ -1,0 +1,96 @@
+name: Build Test APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install msgpack UnityPy texture2ddecoder Pillow
+
+      - name: Pick random sample URLs
+        run: |
+          shuf -n 4 download_list.txt > selected_game1.txt
+          shuf -n 4 yolo_download_list.txt > selected_game2.txt
+          echo "== Game 1 samples =="
+          cat selected_game1.txt
+          echo "== Game 2 samples =="
+          cat selected_game2.txt
+
+      - name: Download Game 1 samples
+        run: |
+          mkdir -p raw_game1
+          while read -r fname url; do
+            echo "Downloading $url -> raw_game1/$fname"
+            curl -L --fail -o "raw_game1/$fname" "$url" || echo "FAILED: $url"
+          done < selected_game1.txt
+
+      - name: Download Game 2 samples
+        run: |
+          mkdir -p raw_game2
+          while read -r id url; do
+            echo "Downloading $url -> raw_game2/$id"
+            curl -L --fail -o "raw_game2/$id" "$url" || echo "FAILED: $url"
+          done < selected_game2.txt
+
+      - name: Convert Game 1 puzzles
+        run: python3 scripts/convert_game1.py raw_game1 www/puzzles
+
+      - name: Convert Game 2 puzzles
+        run: python3 scripts/convert_game2.py raw_game2 www/puzzles
+
+      - name: Generate manifest
+        run: python3 scripts/generate_manifest.py www/puzzles www/manifest.json
+
+      - name: Debug - list converted puzzles
+        run: find www/puzzles -maxdepth 1 -type d
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Add Android platform
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hidden-object-game-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload converted puzzle data (for inspection)
+        uses: actions/upload-artifact@v4
+        with:
+          name: converted-puzzle-data
+          path: www/puzzles
