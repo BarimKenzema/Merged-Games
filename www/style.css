@@ -4,21 +4,42 @@ html, body { margin:0; padding:0; height:100%; font-family:'Segoe UI', Roboto, s
 .hidden { display:none !important; }
 
 /* MENU */
-#menuBg { position:absolute; top:0; left:0; right:0; bottom:0; background-size:cover; background-position:center; filter:blur(2px) brightness(0.55); transform:scale(1.05); background-color:#222; }
-#menuOverlay { position:relative; z-index:2; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px; background:linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.55)); }
+#menuBg {
+  position:absolute; top:0; left:0; right:0; bottom:0;
+  background-size:cover; background-position:center; background-color:#000;
+  filter:blur(18px) brightness(0.55);
+  transform:scale(1.15);
+}
+#menuBgClear {
+  position:absolute; top:0; left:0; right:0; bottom:0;
+  background-size:contain; background-repeat:no-repeat; background-position:center;
+}
+#menuOverlay {
+  position:relative; z-index:2; height:100%;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px;
+  background:linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.6));
+}
 .gameTitle { font-size:30px; font-weight:700; text-shadow:0 3px 10px rgba(0,0,0,0.7); text-align:center; padding:0 20px; margin-bottom:10px; }
 .menuBtn { width:240px; padding:16px 0; font-size:18px; font-weight:600; border:none; border-radius:30px; color:#fff; cursor:pointer; background:linear-gradient(135deg,#ff9966,#ff5e62); box-shadow:0 6px 18px rgba(0,0,0,0.4); }
 .menuBtn:active { transform:scale(0.96); }
 #chooseLevelBtn { background:linear-gradient(135deg,#56ccf2,#2f80ed); }
+.exitBtnStyle { background:linear-gradient(135deg,#757f9a,#d7dde8); color:#1a1a1a; }
 
 /* LEVEL SELECT */
 #screenLevelSelect { background:#151515; display:flex; flex-direction:column; }
 #levelSelectTop { flex:0 0 auto; display:flex; align-items:center; gap:12px; padding:12px; background:#000; }
 #pageIndicator { font-size:15px; opacity:0.8; }
 .iconBtn { background:rgba(255,255,255,0.1); border:none; color:#fff; font-size:20px; width:40px; height:40px; border-radius:50%; }
-#levelGridWrap { flex:1 1 auto; overflow:hidden; }
-#levelGrid { display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:1fr; gap:10px; padding:14px; height:100%; }
-.levelTile { position:relative; border-radius:10px; overflow:hidden; background-size:cover; background-position:center; display:flex; align-items:flex-end; justify-content:center; border:2px solid rgba(255,255,255,0.15); background-color:#333; }
+#levelGridWrap { flex:1 1 auto; overflow:hidden; display:flex; align-items:center; }
+#levelGrid { display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:1fr; gap:12px; padding:14px; width:100%; align-content:center; }
+.levelTile {
+  position:relative; border-radius:10px; overflow:hidden;
+  background-size:contain; background-repeat:no-repeat; background-position:center; background-color:#222;
+  display:flex; align-items:flex-end; justify-content:center;
+  border:2px solid rgba(255,255,255,0.15);
+  aspect-ratio: 1 / 1;
+  width:100%;
+}
 .levelTile .tileLabel { width:100%; text-align:center; font-size:13px; font-weight:600; background:rgba(0,0,0,0.55); padding:4px 0; }
 .levelTile.locked { filter:grayscale(1) brightness(0.35); }
 .levelTile.locked .tileLabel { display:none; }
