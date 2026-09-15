@@ -1,263 +1,414 @@
-const state = {
-  manifest: null,
-  currentIndex: 0,
+// ---------------- PERSISTENT GLOBAL PROGRESS ----------------
+function loadGlobal(){
+  const raw = localStorage.getItem('hog_global');
+  if (raw) { try { return JSON.parse(raw); } catch(e) {} }
+  return { hintCharges: 3, highestUnlockedIndex: 0, lastPlayedIndex: 0, completedIds: [] };
+}
+function saveGlobal(g){ localStorage.setItem('hog_global', JSON.stringify(g)); }
+
+let manifest = null;
+let cameFrom = 'menu';
+let levelPage = 0;
+
+// ---------------- SCREEN SWITCHING ----------------
+const screens = ['screenMenu','screenLevelSelect','screenGame'];
+function showScreen(id){
+  screens.forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
+}
+
+// ---------------- INIT ----------------
+async function init(){
+  const res = await fetch('manifest.json');
+  manifest = await res.json();
+  setupMenuBackground();
+  showScreen('screenMenu');
+}
+
+function setupMenuBackground(){
+  if (!manifest.puzzles.length) return;
+  const pick = manifest.puzzles[Math.floor(Math.random()*manifest.puzzles.length)];
+  document.getElementById('menuBg').style.backgroundImage = `url(puzzles/${pick.thumbnail})`;
+}
+
+document.getElementById('playBtn').addEventListener('click', () => {
+  const g = loadGlobal();
+  cameFrom = 'menu';
+  openGame(Math.min(g.lastPlayedIndex, manifest.puzzles.length-1));
+});
+document.getElementById('chooseLevelBtn').addEventListener('click', () => {
+  openLevelSelect();
+});
+document.getElementById('levelBackBtn').addEventListener('click', () => {
+  setupMenuBackground();
+  showScreen('screenMenu');
+});
+document.getElementById('gameBackBtn').addEventListener('click', () => {
+  stopGlow();
+  if (cameFrom === 'levelSelect') openLevelSelect();
+  else { setupMenuBackground(); showScreen('screenMenu'); }
+});
+
+// ---------------- LEVEL SELECT ----------------
+function openLevelSelect(){
+  const g = loadGlobal();
+  levelPage = Math.min(levelPage, Math.floor(g.highestUnlockedIndex/16));
+  renderLevelPage();
+  showScreen('screenLevelSelect');
+}
+
+function renderLevelPage(){
+  const g = loadGlobal();
+  const grid = document.getElementById('levelGrid');
+  grid.innerHTML = '';
+  const startIdx = levelPage * 16;
+  const maxPage = Math.floor(g.highestUnlockedIndex/16);
+  for (let i=0; i<16; i++){
+    const idx = startIdx + i;
+    if (idx >= manifest.puzzles.length) break;
+    const entry = manifest.puzzles[idx];
+    const unlocked = idx <= g.highestUnlockedIndex;
+    const completed = g.completedIds.includes(entry.puzzle_id);
+    const tile = document.createElement('div');
+    tile.className = 'levelTile' + (unlocked ? '' : ' locked');
+    tile.style.backgroundImage = `url(puzzles/${entry.thumbnail})`;
+    tile.innerHTML = unlocked
+      ? `<div class="tileLabel">Level ${idx+1}</div>${completed ? '<div class="checkIcon">✔</div>' : ''}`
+      : `<div class="lockIcon">🔒</div>`;
+    if (unlocked) {
+      tile.addEventListener('click', () => { cameFrom='levelSelect'; openGame(idx); });
+    }
+    grid.appendChild(tile);
+  }
+  const totalPagesReachable = maxPage + 1;
+  document.getElementById('pageIndicator').textContent = `Page ${levelPage+1} / ${totalPagesReachable}`;
+}
+
+function changeLevelPage(delta){
+  const g = loadGlobal();
+  const maxPage = Math.floor(g.highestUnlockedIndex/16);
+  const newPage = levelPage + delta;
+  if (newPage < 0 || newPage > maxPage) return;
+  levelPage = newPage;
+  renderLevelPage();
+}
+
+let lvlTouchStartX=null, lvlTouchStartY=null;
+const levelGridWrap = document.getElementById('levelGridWrap');
+levelGridWrap.addEventListener('touchstart', e => {
+  if (e.touches.length===1){ lvlTouchStartX=e.touches[0].clientX; lvlTouchStartY=e.touches[0].clientY; }
+});
+levelGridWrap.addEventListener('touchend', e => {
+  if (lvlTouchStartX===null) return;
+  const dx = e.changedTouches[0].clientX - lvlTouchStartX;
+  const dy = e.changedTouches[0].clientY - lvlTouchStartY;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)*1.5){
+    changeLevelPage(dx < 0 ? 1 : -1);
+  }
+  lvlTouchStartX=null; lvlTouchStartY=null;
+});
+
+// ---------------- GAME STATE ----------------
+const gs = {
+  levelIndex: 0,
   puzzleData: null,
   atlasImg: null,
   found: new Set(),
+  pending: new Set(),
   lives: 5,
   maxLives: 5
 };
-
-let viewState = { scale: 1, x: 0, y: 0 };
-let touchStartDist = null;
-let touchStartScale = 1;
-let panStart = null;
-let didMove = false;
+let viewState = { scale:1, x:0, y:0 };
+let touchStartDist=null, touchStartScale=1, panStart=null, didMove=false;
+let glowInterval = null;
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const heartsDiv = document.getElementById('hearts');
-const puzzleLabel = document.getElementById('puzzleLabel');
 const trayDiv = document.getElementById('trayRow');
 const winOverlay = document.getElementById('winOverlay');
 const loseOverlay = document.getElementById('loseOverlay');
-const nextBtn = document.getElementById('nextBtn');
-const retryBtn = document.getElementById('retryBtn');
+const hintBtn = document.getElementById('hintBtn');
+const hintCountEl = document.getElementById('hintCount');
 
-function loadProgress(){
-  const raw = localStorage.getItem('hog_progress');
-  if (raw) { try { return JSON.parse(raw); } catch(e) {} }
-  return { currentIndex: 0, completed: [] };
-}
-function saveProgress(p){ localStorage.setItem('hog_progress', JSON.stringify(p)); }
+async function openGame(index){
+  gs.levelIndex = index;
+  const g = loadGlobal();
+  g.lastPlayedIndex = index;
+  saveGlobal(g);
 
-async function init(){
-  const res = await fetch('manifest.json');
-  state.manifest = await res.json();
-  const progress = loadProgress();
-  state.currentIndex = progress.currentIndex || 0;
-  if (state.currentIndex >= state.manifest.puzzles.length) state.currentIndex = 0;
-  await loadPuzzle(state.currentIndex);
-}
-
-async function loadPuzzle(index){
   hideOverlays();
-  const entry = state.manifest.puzzles[index];
+  const entry = manifest.puzzles[index];
   const res = await fetch(`puzzles/${entry.puzzle_id}/data.json`);
-  state.puzzleData = await res.json();
-  state.found = new Set();
-  state.lives = state.maxLives;
+  gs.puzzleData = await res.json();
+  gs.found = new Set();
+  gs.pending = new Set();
+  gs.lives = gs.maxLives;
 
   const img = new Image();
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
-    img.src = `puzzles/${entry.puzzle_id}/${state.puzzleData.atlas}`;
+  await new Promise((resolve,reject) => {
+    img.onload = resolve; img.onerror = reject;
+    img.src = `puzzles/${entry.puzzle_id}/${gs.puzzleData.atlas}`;
   });
-  state.atlasImg = img;
+  gs.atlasImg = img;
 
-  canvas.width = state.puzzleData.canvas_width;
-  canvas.height = state.puzzleData.canvas_height;
+  canvas.width = gs.puzzleData.canvas_width;
+  canvas.height = gs.puzzleData.canvas_height;
   fitCanvas();
   resetView();
 
-  puzzleLabel.textContent = `Puzzle ${index+1} / ${state.manifest.puzzles.length}`;
   buildHearts();
   buildTray();
+  updateHintBadge();
+  startGlow();
   render();
+  showScreen('screenGame');
 }
 
 function fitCanvas(){
   const area = document.getElementById('gameArea');
-  const maxW = area.clientWidth;
-  const maxH = area.clientHeight;
-  const scale = Math.min(maxW / canvas.width, maxH / canvas.height);
-  canvas.style.width = (canvas.width * scale) + 'px';
-  canvas.style.height = (canvas.height * scale) + 'px';
+  const scale = Math.min(area.clientWidth/canvas.width, area.clientHeight/canvas.height);
+  canvas.style.width = (canvas.width*scale)+'px';
+  canvas.style.height = (canvas.height*scale)+'px';
 }
 window.addEventListener('resize', () => { fitCanvas(); resetView(); });
 
-function resetView(){
-  viewState = {scale:1, x:0, y:0};
-  applyTransform();
-}
+function resetView(){ viewState={scale:1,x:0,y:0}; applyTransform(); }
 function applyTransform(){
-  canvas.style.transformOrigin = '0 0';
+  canvas.style.transformOrigin='0 0';
   canvas.style.transform = `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.scale})`;
 }
-function getTouchDist(t){
-  const dx = t[0].clientX - t[1].clientX;
-  const dy = t[0].clientY - t[1].clientY;
-  return Math.sqrt(dx*dx + dy*dy);
-}
+function getTouchDist(t){ const dx=t[0].clientX-t[1].clientX, dy=t[0].clientY-t[1].clientY; return Math.sqrt(dx*dx+dy*dy); }
 
-canvas.addEventListener('touchstart', (e) => {
-  didMove = false;
-  if (e.touches.length === 2) {
-    touchStartDist = getTouchDist(e.touches);
-    touchStartScale = viewState.scale;
-  } else if (e.touches.length === 1) {
-    panStart = { x: e.touches[0].clientX - viewState.x, y: e.touches[0].clientY - viewState.y };
-  }
+canvas.addEventListener('touchstart', e => {
+  didMove=false;
+  if (e.touches.length===2){ touchStartDist=getTouchDist(e.touches); touchStartScale=viewState.scale; }
+  else if (e.touches.length===1){ panStart={x:e.touches[0].clientX-viewState.x, y:e.touches[0].clientY-viewState.y}; }
 }, {passive:true});
-
-canvas.addEventListener('touchmove', (e) => {
-  didMove = true;
-  if (e.touches.length === 2 && touchStartDist) {
-    const newDist = getTouchDist(e.touches);
-    let newScale = touchStartScale * (newDist / touchStartDist);
-    newScale = Math.max(1, Math.min(4, newScale));
-    viewState.scale = newScale;
+canvas.addEventListener('touchmove', e => {
+  didMove=true;
+  if (e.touches.length===2 && touchStartDist){
+    let s = touchStartScale*(getTouchDist(e.touches)/touchStartDist);
+    viewState.scale = Math.max(1, Math.min(4,s));
     applyTransform();
-  } else if (e.touches.length === 1 && panStart && viewState.scale > 1) {
+  } else if (e.touches.length===1 && panStart && viewState.scale>1){
     viewState.x = e.touches[0].clientX - panStart.x;
     viewState.y = e.touches[0].clientY - panStart.y;
     applyTransform();
   }
 }, {passive:true});
-
-canvas.addEventListener('touchend', (e) => {
-  if (e.touches.length === 0) { touchStartDist = null; panStart = null; }
-});
+canvas.addEventListener('touchend', e => { if (e.touches.length===0){ touchStartDist=null; panStart=null; } });
 
 function buildHearts(){
-  heartsDiv.innerHTML = '';
-  for (let i=0; i<state.maxLives; i++){
-    const span = document.createElement('span');
-    span.textContent = '❤️';
-    span.id = 'heart_' + i;
+  heartsDiv.innerHTML='';
+  for (let i=0;i<gs.maxLives;i++){
+    const span=document.createElement('span'); span.textContent='❤️'; span.id='heart_'+i;
     heartsDiv.appendChild(span);
   }
 }
 function updateHearts(){
-  for (let i=0; i<state.maxLives; i++){
-    const el = document.getElementById('heart_' + i);
-    if (el) el.className = i < state.lives ? '' : 'lost';
+  for (let i=0;i<gs.maxLives;i++){
+    const el=document.getElementById('heart_'+i);
+    if (el) el.className = i<gs.lives ? '' : 'lost';
   }
 }
 
 function cropToDataUrl(rect){
-  const tc = document.createElement('canvas');
-  tc.width = rect[2]; tc.height = rect[3];
-  const tctx = tc.getContext('2d');
-  tctx.drawImage(state.atlasImg, rect[0], rect[1], rect[2], rect[3], 0, 0, rect[2], rect[3]);
+  const tc=document.createElement('canvas'); tc.width=rect[2]; tc.height=rect[3];
+  tc.getContext('2d').drawImage(gs.atlasImg, rect[0], rect[1], rect[2], rect[3], 0, 0, rect[2], rect[3]);
   return tc.toDataURL();
 }
 
 function buildTray(){
-  trayDiv.innerHTML = '';
-  state.puzzleData.items.forEach(item => {
-    const div = document.createElement('div');
-    div.className = 'trayItem';
-    div.id = 'tray_' + item.index;
+  trayDiv.innerHTML='';
+  gs.puzzleData.items.forEach(item => {
+    const div=document.createElement('div');
+    div.className='trayItem'; div.id='tray_'+item.index;
     const rect = item.thumb_rect || item.sprite_rect;
     div.style.backgroundImage = `url(${cropToDataUrl(rect)})`;
+    div.addEventListener('click', () => showZoomPreview(item, div));
     trayDiv.appendChild(div);
   });
 }
 
+let currentZoomEl = null;
+function showZoomPreview(item, trayEl){
+  if (currentZoomEl) { currentZoomEl.remove(); currentZoomEl=null; }
+  const rect = item.thumb_rect || item.sprite_rect;
+  const trayRect = trayEl.getBoundingClientRect();
+  const w = trayRect.width*2.5, h = trayRect.height*2.5;
+  const el = document.createElement('div');
+  el.className='zoomPreview';
+  el.style.backgroundImage = `url(${cropToDataUrl(rect)})`;
+  el.style.width = w+'px'; el.style.height = h+'px';
+  let left = trayRect.left + trayRect.width/2 - w/2;
+  left = Math.max(8, Math.min(window.innerWidth-w-8, left));
+  el.style.left = left+'px';
+  el.style.top = (trayRect.top - h - 12)+'px';
+  document.body.appendChild(el);
+  currentZoomEl = el;
+  setTimeout(() => { if (currentZoomEl===el){ el.remove(); currentZoomEl=null; } }, 1400);
+}
+
 function render(){
+  if (!gs.atlasImg) return;
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  const bg = state.puzzleData.background_rect;
-  ctx.drawImage(state.atlasImg, bg[0], bg[1], bg[2], bg[3], 0, 0, canvas.width, canvas.height);
+  const bg = gs.puzzleData.background_rect;
+  ctx.drawImage(gs.atlasImg, bg[0], bg[1], bg[2], bg[3], 0, 0, canvas.width, canvas.height);
 
   let drawList = [];
-  state.puzzleData.decor.forEach(d => drawList.push({type:'decor', zOrder:d.zOrder, data:d}));
-  state.puzzleData.items.forEach(it => {
-    if (!state.found.has(it.index)) drawList.push({type:'item', zOrder:it.zOrder, data:it});
+  gs.puzzleData.decor.forEach(d => drawList.push({type:'decor', zOrder:d.zOrder, data:d}));
+  gs.puzzleData.items.forEach(it => {
+    if (!gs.found.has(it.index) && !gs.pending.has(it.index)) drawList.push({type:'item', zOrder:it.zOrder, data:it});
   });
-  drawList.sort((a,b) => a.zOrder - b.zOrder);
+  drawList.sort((a,b) => a.zOrder-b.zOrder);
 
   drawList.forEach(entry => {
-    const d = entry.data;
-    const rect = d.sprite_rect;
+    const d = entry.data, rect = d.sprite_rect;
     ctx.save();
     ctx.translate(d.x, d.y);
-    if (d.rotation) ctx.rotate(d.rotation * Math.PI/180);
-    ctx.drawImage(state.atlasImg, rect[0], rect[1], rect[2], rect[3], -rect[2]/2, -rect[3]/2, rect[2], rect[3]);
+    if (d.rotation) ctx.rotate(d.rotation*Math.PI/180);
+    ctx.drawImage(gs.atlasImg, rect[0], rect[1], rect[2], rect[3], -rect[2]/2, -rect[3]/2, rect[2], rect[3]);
     ctx.restore();
   });
 }
 
-function pointInPolygon(px, py, poly){
-  let inside = false;
-  for (let i=0, j=poly.length-1; i<poly.length; j=i++){
+function pointInPolygon(px,py,poly){
+  let inside=false;
+  for (let i=0,j=poly.length-1;i<poly.length;j=i++){
     const xi=poly[i].x, yi=poly[i].y, xj=poly[j].x, yj=poly[j].y;
-    const intersect = ((yi>py) !== (yj>py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi);
-    if (intersect) inside = !inside;
+    const intersect = ((yi>py)!==(yj>py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi);
+    if (intersect) inside=!inside;
   }
   return inside;
 }
 
 function handleClick(clickX, clickY){
-  const candidates = [];
-  for (const item of state.puzzleData.items) {
-    if (state.found.has(item.index)) continue;
-    const rot = item.rotation || 0;
-    const rad = -rot * Math.PI/180;
-    const dx = clickX - item.x, dy = clickY - item.y;
-    const localX = dx*Math.cos(rad) - dy*Math.sin(rad);
-    const localY = dx*Math.sin(rad) + dy*Math.cos(rad);
-    if (pointInPolygon(localX, localY, item.hitbox_polygon)) {
-      candidates.push(item);
-    }
+  const candidates=[];
+  for (const item of gs.puzzleData.items){
+    if (gs.found.has(item.index) || gs.pending.has(item.index)) continue;
+    const rot = item.rotation||0, rad=-rot*Math.PI/180;
+    const dx=clickX-item.x, dy=clickY-item.y;
+    const lx = dx*Math.cos(rad)-dy*Math.sin(rad);
+    const ly = dx*Math.sin(rad)+dy*Math.cos(rad);
+    if (pointInPolygon(lx,ly,item.hitbox_polygon)) candidates.push(item);
   }
-  if (candidates.length > 0){
-    candidates.sort((a,b) => b.zOrder - a.zOrder);
-    markFound(candidates[0].index);
+  if (candidates.length){
+    candidates.sort((a,b) => b.zOrder-a.zOrder);
+    startFoundAnimation(candidates[0]);
   } else {
     registerMiss();
   }
 }
 
-function markFound(index){
-  state.found.add(index);
-  const trayEl = document.getElementById('tray_' + index);
+function startFoundAnimation(item){
+  gs.pending.add(item.index);
+  render();
+
+  const canvasRect = canvas.getBoundingClientRect();
+  const scaleX = canvasRect.width/canvas.width, scaleY = canvasRect.height/canvas.height;
+  const rect = item.sprite_rect;
+  const startW = rect[2]*scaleX, startH = rect[3]*scaleY;
+  const startX = canvasRect.left + item.x*scaleX - startW/2;
+  const startY = canvasRect.top + item.y*scaleY - startH/2;
+
+  const fly = document.createElement('div');
+  fly.className='flyingItem';
+  fly.style.backgroundImage = `url(${cropToDataUrl(rect)})`;
+  fly.style.left=startX+'px'; fly.style.top=startY+'px';
+  fly.style.width=startW+'px'; fly.style.height=startH+'px';
+  fly.style.transition = 'all 0.18s ease';
+  document.body.appendChild(fly);
+
+  requestAnimationFrame(() => {
+    const cx=startX+startW/2, cy=startY+startH/2;
+    const bigW=startW*2.5, bigH=startH*2.5;
+    fly.style.left=(cx-bigW/2)+'px'; fly.style.top=(cy-bigH/2)+'px';
+    fly.style.width=bigW+'px'; fly.style.height=bigH+'px';
+  });
+
+  setTimeout(() => {
+    fly.style.transition = 'all 0.45s cubic-bezier(.4,0,.2,1)';
+    const trayEl = document.getElementById('tray_'+item.index);
+    const tr = trayEl ? trayEl.getBoundingClientRect() : {left:window.innerWidth-40, top:window.innerHeight-40, width:40, height:40};
+    fly.style.left=tr.left+'px'; fly.style.top=tr.top+'px';
+    fly.style.width=tr.width+'px'; fly.style.height=tr.height+'px';
+    fly.style.opacity='0.4';
+  }, 190);
+
+  setTimeout(() => { fly.remove(); finalizeFound(item.index); }, 190+470);
+}
+
+function finalizeFound(index){
+  gs.pending.delete(index);
+  gs.found.add(index);
+  const trayEl = document.getElementById('tray_'+index);
   if (trayEl) trayEl.classList.add('found');
   render();
-  if (state.found.size === state.puzzleData.items.length) {
-    setTimeout(showWin, 400);
-  }
+  if (gs.found.size === gs.puzzleData.items.length) setTimeout(showWin, 250);
 }
 
 function registerMiss(){
-  state.lives--;
+  gs.lives--;
   updateHearts();
-  if (state.lives <= 0) setTimeout(showLose, 200);
+  if (gs.lives<=0) setTimeout(showLose, 200);
 }
 
 function showWin(){
-  const progress = loadProgress();
-  const entry = state.manifest.puzzles[state.currentIndex];
-  if (!progress.completed.includes(entry.puzzle_id)) progress.completed.push(entry.puzzle_id);
-  progress.currentIndex = state.currentIndex;
-  saveProgress(progress);
+  const g = loadGlobal();
+  const entry = manifest.puzzles[gs.levelIndex];
+  if (!g.completedIds.includes(entry.puzzle_id)) g.completedIds.push(entry.puzzle_id);
+  if (gs.levelIndex >= g.highestUnlockedIndex) {
+    g.highestUnlockedIndex = Math.min(gs.levelIndex+1, manifest.puzzles.length-1);
+  }
+  if (gs.lives === gs.maxLives) g.hintCharges = Math.min(9, g.hintCharges+1);
+  saveGlobal(g);
+  updateHintBadge();
+  stopGlow();
   winOverlay.classList.remove('hidden');
 }
-function showLose(){ loseOverlay.classList.remove('hidden'); }
-function hideOverlays(){
-  winOverlay.classList.add('hidden');
-  loseOverlay.classList.add('hidden');
-}
+function showLose(){ stopGlow(); loseOverlay.classList.remove('hidden'); }
+function hideOverlays(){ winOverlay.classList.add('hidden'); loseOverlay.classList.add('hidden'); }
 
-nextBtn.addEventListener('click', async () => {
-  state.currentIndex = (state.currentIndex + 1) % state.manifest.puzzles.length;
-  const progress = loadProgress();
-  progress.currentIndex = state.currentIndex;
-  saveProgress(progress);
-  await loadPuzzle(state.currentIndex);
+document.getElementById('nextBtn').addEventListener('click', () => {
+  const next = Math.min(gs.levelIndex+1, manifest.puzzles.length-1);
+  openGame(next);
+});
+document.getElementById('retryBtn').addEventListener('click', () => { openGame(gs.levelIndex); });
+
+canvas.addEventListener('click', e => {
+  if (didMove){ didMove=false; return; }
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width/rect.width, scaleY = canvas.height/rect.height;
+  handleClick((e.clientX-rect.left)*scaleX, (e.clientY-rect.top)*scaleY);
 });
 
-retryBtn.addEventListener('click', async () => { await loadPuzzle(state.currentIndex); });
+// ---------------- HINT / MAGNIFYING GLASS ----------------
+function updateHintBadge(){
+  const g = loadGlobal();
+  hintCountEl.textContent = g.hintCharges;
+}
+function startGlow(){
+  stopGlow();
+  glowInterval = setInterval(() => {
+    const g = loadGlobal();
+    if (g.hintCharges > 0){
+      hintBtn.classList.add('glow');
+      setTimeout(() => hintBtn.classList.remove('glow'), 1100);
+    }
+  }, 5000);
+}
+function stopGlow(){ if (glowInterval){ clearInterval(glowInterval); glowInterval=null; } hintBtn.classList.remove('glow'); }
 
-canvas.addEventListener('click', (e) => {
-  if (didMove) { didMove = false; return; }
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const x = (e.clientX - rect.left) * scaleX;
-  const y = (e.clientY - rect.top) * scaleY;
-  handleClick(x, y);
+hintBtn.addEventListener('click', () => {
+  const g = loadGlobal();
+  if (g.hintCharges <= 0) return;
+  const remaining = gs.puzzleData.items.filter(it => !gs.found.has(it.index) && !gs.pending.has(it.index));
+  if (!remaining.length) return;
+  const pick = remaining[Math.floor(Math.random()*remaining.length)];
+  g.hintCharges--;
+  saveGlobal(g);
+  updateHintBadge();
+  startFoundAnimation(pick);
 });
 
 init();
