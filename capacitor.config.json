@@ -1,0 +1,6 @@
+{
+  "appId": "com.example.hiddenobjectgame",
+  "appName": "Hidden Object Game",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}
