@@ -1,0 +1,12 @@
+{
+  "name": "hidden-object-game",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@capacitor/core": "^5.5.1",
+    "@capacitor/android": "^5.5.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^5.5.1"
+  }
+}
