@@ -1,13 +1,62 @@
-html,body { margin:0; padding:0; background:#111; color:#fff; font-family:sans-serif; height:100%; overflow:hidden; }
-#topbar { display:flex; justify-content:space-between; align-items:center; padding:8px; background:#000; }
+html, body {
+  margin:0; padding:0; background:#111; color:#fff;
+  font-family:sans-serif; height:100%; overflow:hidden;
+}
+body { display:flex; flex-direction:column; height:100vh; }
+
+#topbar {
+  flex:0 0 auto;
+  display:flex; justify-content:space-between; align-items:center;
+  padding:8px; background:#000;
+}
 #hearts { font-size:22px; }
 #hearts .lost { opacity:0.25; }
-#gameArea { width:100%; height:65vh; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#222; touch-action:none; }
+
+#gameArea {
+  flex:1 1 auto; min-height:0;
+  overflow:hidden;
+  display:flex; align-items:center; justify-content:center;
+  background:#222;
+  touch-action:none;
+  position:relative;
+}
 #gameCanvas { touch-action:none; }
-#trayRow { display:flex; flex-wrap:wrap; gap:6px; padding:10px; background:#000; height:20vh; overflow-y:auto; }
-.trayItem { width:54px; height:54px; border:2px solid #555; border-radius:6px; background-size:cover; background-position:center; order:0; transition: all 0.4s ease; }
-.trayItem.found { order:999; opacity:0.35; border-color: lime; transform: scale(0.85); }
+
+#trayRow {
+  flex:0 0 auto;
+  display:flex; flex-wrap:wrap; gap:6px;
+  padding:10px; background:#000;
+  max-height:22vh; overflow-y:auto;
+}
+
+.trayItem {
+  width:60px; height:60px;
+  border:2px solid #555; border-radius:6px;
+  background-size:contain;
+  background-repeat:no-repeat;
+  background-position:center;
+  background-color:#333;
+  order:0;
+  position:relative;
+  transition: all 0.4s ease;
+}
+.trayItem.found {
+  order:999;
+  opacity:0.55;
+  border-color: lime;
+  transform: scale(0.9);
+}
+.trayItem.found::after {
+  content:'✔';
+  position:absolute; top:0; left:0; right:0; bottom:0;
+  display:flex; align-items:center; justify-content:center;
+  font-size:28px; color:#0f0; font-weight:bold;
+  background:rgba(0,0,0,0.35);
+  border-radius:4px;
+}
+
 .hidden { display:none !important; }
+
 #winOverlay, #loseOverlay {
   position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.85);
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; z-index:50;
