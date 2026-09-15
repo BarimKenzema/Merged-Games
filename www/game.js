@@ -1,4 +1,3 @@
-// ---------------- PERSISTENT GLOBAL PROGRESS ----------------
 function loadGlobal(){
   const raw = localStorage.getItem('hog_global');
   if (raw) { try { return JSON.parse(raw); } catch(e) {} }
@@ -9,25 +8,28 @@ function saveGlobal(g){ localStorage.setItem('hog_global', JSON.stringify(g)); }
 let manifest = null;
 let cameFrom = 'menu';
 let levelPage = 0;
+const PER_PAGE = 8;
 
-// ---------------- SCREEN SWITCHING ----------------
 const screens = ['screenMenu','screenLevelSelect','screenGame'];
 function showScreen(id){
   screens.forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
 }
+function isScreenVisible(id){ return !document.getElementById(id).classList.contains('hidden'); }
 
-// ---------------- INIT ----------------
 async function init(){
   const res = await fetch('manifest.json');
   manifest = await res.json();
   setupMenuBackground();
   showScreen('screenMenu');
+  setupBackButtonHandling();
 }
 
 function setupMenuBackground(){
   if (!manifest.puzzles.length) return;
   const pick = manifest.puzzles[Math.floor(Math.random()*manifest.puzzles.length)];
-  document.getElementById('menuBg').style.backgroundImage = `url(puzzles/${pick.thumbnail})`;
+  const url = `puzzles/${pick.background}`;
+  document.getElementById('menuBg').style.backgroundImage = `url(${url})`;
+  document.getElementById('menuBgClear').style.backgroundImage = `url(${url})`;
 }
 
 document.getElementById('playBtn').addEventListener('click', () => {
@@ -35,23 +37,14 @@ document.getElementById('playBtn').addEventListener('click', () => {
   cameFrom = 'menu';
   openGame(Math.min(g.lastPlayedIndex, manifest.puzzles.length-1));
 });
-document.getElementById('chooseLevelBtn').addEventListener('click', () => {
-  openLevelSelect();
-});
-document.getElementById('levelBackBtn').addEventListener('click', () => {
-  setupMenuBackground();
-  showScreen('screenMenu');
-});
-document.getElementById('gameBackBtn').addEventListener('click', () => {
-  stopGlow();
-  if (cameFrom === 'levelSelect') openLevelSelect();
-  else { setupMenuBackground(); showScreen('screenMenu'); }
-});
+document.getElementById('chooseLevelBtn').addEventListener('click', () => { openLevelSelect(); });
+document.getElementById('exitBtn').addEventListener('click', () => { confirmExit(); });
+document.getElementById('levelBackBtn').addEventListener('click', () => { handleBackNavigation(); });
+document.getElementById('gameBackBtn').addEventListener('click', () => { handleBackNavigation(); });
 
-// ---------------- LEVEL SELECT ----------------
 function openLevelSelect(){
   const g = loadGlobal();
-  levelPage = Math.min(levelPage, Math.floor(g.highestUnlockedIndex/16));
+  levelPage = Math.min(levelPage, Math.floor(g.highestUnlockedIndex/PER_PAGE));
   renderLevelPage();
   showScreen('screenLevelSelect');
 }
@@ -60,9 +53,9 @@ function renderLevelPage(){
   const g = loadGlobal();
   const grid = document.getElementById('levelGrid');
   grid.innerHTML = '';
-  const startIdx = levelPage * 16;
-  const maxPage = Math.floor(g.highestUnlockedIndex/16);
-  for (let i=0; i<16; i++){
+  const startIdx = levelPage * PER_PAGE;
+  const maxPage = Math.floor(g.highestUnlockedIndex/PER_PAGE);
+  for (let i=0; i<PER_PAGE; i++){
     const idx = startIdx + i;
     if (idx >= manifest.puzzles.length) break;
     const entry = manifest.puzzles[idx];
@@ -79,13 +72,12 @@ function renderLevelPage(){
     }
     grid.appendChild(tile);
   }
-  const totalPagesReachable = maxPage + 1;
-  document.getElementById('pageIndicator').textContent = `Page ${levelPage+1} / ${totalPagesReachable}`;
+  document.getElementById('pageIndicator').textContent = `Page ${levelPage+1} / ${maxPage+1}`;
 }
 
 function changeLevelPage(delta){
   const g = loadGlobal();
-  const maxPage = Math.floor(g.highestUnlockedIndex/16);
+  const maxPage = Math.floor(g.highestUnlockedIndex/PER_PAGE);
   const newPage = levelPage + delta;
   if (newPage < 0 || newPage > maxPage) return;
   levelPage = newPage;
@@ -107,7 +99,6 @@ levelGridWrap.addEventListener('touchend', e => {
   lvlTouchStartX=null; lvlTouchStartY=null;
 });
 
-// ---------------- GAME STATE ----------------
 const gs = {
   levelIndex: 0,
   puzzleData: null,
@@ -151,6 +142,10 @@ async function openGame(index){
   });
   gs.atlasImg = img;
 
+  // IMPORTANT: make the game screen visible BEFORE measuring/sizing the canvas,
+  // otherwise gameArea has 0 width/height and the canvas collapses to nothing.
+  showScreen('screenGame');
+
   canvas.width = gs.puzzleData.canvas_width;
   canvas.height = gs.puzzleData.canvas_height;
   fitCanvas();
@@ -161,7 +156,6 @@ async function openGame(index){
   updateHintBadge();
   startGlow();
   render();
-  showScreen('screenGame');
 }
 
 function fitCanvas(){
@@ -170,7 +164,7 @@ function fitCanvas(){
   canvas.style.width = (canvas.width*scale)+'px';
   canvas.style.height = (canvas.height*scale)+'px';
 }
-window.addEventListener('resize', () => { fitCanvas(); resetView(); });
+window.addEventListener('resize', () => { if (isScreenVisible('screenGame')) { fitCanvas(); resetView(); } });
 
 function resetView(){ viewState={scale:1,x:0,y:0}; applyTransform(); }
 function applyTransform(){
@@ -382,7 +376,6 @@ canvas.addEventListener('click', e => {
   handleClick((e.clientX-rect.left)*scaleX, (e.clientY-rect.top)*scaleY);
 });
 
-// ---------------- HINT / MAGNIFYING GLASS ----------------
 function updateHintBadge(){
   const g = loadGlobal();
   hintCountEl.textContent = g.hintCharges;
@@ -410,5 +403,36 @@ hintBtn.addEventListener('click', () => {
   updateHintBadge();
   startFoundAnimation(pick);
 });
+
+// ---------------- BACK BUTTON / EXIT HANDLING ----------------
+function handleBackNavigation(){
+  if (isScreenVisible('screenGame')) {
+    stopGlow();
+    if (cameFrom === 'levelSelect') openLevelSelect();
+    else { setupMenuBackground(); showScreen('screenMenu'); }
+    return;
+  }
+  if (isScreenVisible('screenLevelSelect')) {
+    setupMenuBackground();
+    showScreen('screenMenu');
+    return;
+  }
+  confirmExit();
+}
+
+function confirmExit(){
+  const ok = window.confirm('Exit the game?');
+  if (ok) {
+    if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App) {
+      Capacitor.Plugins.App.exitApp();
+    }
+  }
+}
+
+function setupBackButtonHandling(){
+  if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App) {
+    Capacitor.Plugins.App.addListener('backButton', handleBackNavigation);
+  }
+}
 
 init();
