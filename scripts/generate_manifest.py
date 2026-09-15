@@ -13,7 +13,8 @@ for data_path in sorted(glob.glob(os.path.join(puzzles_dir, "*", "data.json"))):
         "puzzle_id": d["puzzle_id"],
         "source_game": d["source_game"],
         "item_count": len(d["items"]),
-        "thumbnail": f"{folder}/{d.get('thumbnail', 'thumb.jpg')}"
+        "thumbnail": f"{folder}/{d.get('thumbnail', 'thumb.jpg')}",
+        "background": f"{folder}/{d.get('background', 'bg.jpg')}"
     })
 
 groups = {}
@@ -23,9 +24,6 @@ for p in all_puzzles:
 for g in groups.values():
     random.shuffle(g)
 
-# Proportional weighted interleave: always pick from whichever group
-# has been used the smallest fraction of its total so far. This spreads
-# smaller catalogs evenly across the whole sequence instead of clumping.
 result = []
 indices = {k: 0 for k in groups}
 totals = {k: len(v) for k, v in groups.items()}
