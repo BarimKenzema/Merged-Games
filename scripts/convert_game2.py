@@ -171,13 +171,19 @@ def convert_one(bundle_path, out_root):
         final_x = canvas_w / 2 + info['x']
         # CONFIRMED FIX: decor/shadow Y is NOT flipped
         final_y = canvas_h / 2 + info['y']
-        decor.append({
+        decor_entry = {
             "sprite_rect": sprite_rects[name],
             "x": final_x,
             "y": final_y,
             "rotation": info['rotation'],
             "zOrder": info['layer']
-        })
+        }
+        if info['item_type'] == 'hshadow':
+            # Links this shadow to its parent hidden item's index, so the
+            # frontend can hide it once that item is found (fixes "shadow
+            # left behind after finding item" bug).
+            decor_entry['linked_item_index'] = info['item_number'] - 1
+        decor.append(decor_entry)
 
     puzzle_folder_name = f"game2_{level_id}"
     out_dir = os.path.join(out_root, puzzle_folder_name)
