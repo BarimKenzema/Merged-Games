@@ -1,64 +1,52 @@
-html, body {
-  margin:0; padding:0; background:#111; color:#fff;
-  font-family:sans-serif; height:100%; overflow:hidden;
-}
-body { display:flex; flex-direction:column; height:100vh; }
-
-#topbar {
-  flex:0 0 auto;
-  display:flex; justify-content:space-between; align-items:center;
-  padding:8px; background:#000;
-}
-#hearts { font-size:22px; }
-#hearts .lost { opacity:0.25; }
-
-#gameArea {
-  flex:1 1 auto; min-height:0;
-  overflow:hidden;
-  display:flex; align-items:center; justify-content:center;
-  background:#222;
-  touch-action:none;
-  position:relative;
-}
-#gameCanvas { touch-action:none; }
-
-#trayRow {
-  flex:0 0 auto;
-  display:flex; flex-wrap:wrap; gap:6px;
-  padding:10px; background:#000;
-  max-height:22vh; overflow-y:auto;
-}
-
-.trayItem {
-  width:60px; height:60px;
-  border:2px solid #555; border-radius:6px;
-  background-size:contain;
-  background-repeat:no-repeat;
-  background-position:center;
-  background-color:#333;
-  order:0;
-  position:relative;
-  transition: all 0.4s ease;
-}
-.trayItem.found {
-  order:999;
-  opacity:0.55;
-  border-color: lime;
-  transform: scale(0.9);
-}
-.trayItem.found::after {
-  content:'✔';
-  position:absolute; top:0; left:0; right:0; bottom:0;
-  display:flex; align-items:center; justify-content:center;
-  font-size:28px; color:#0f0; font-weight:bold;
-  background:rgba(0,0,0,0.35);
-  border-radius:4px;
-}
-
+* { box-sizing: border-box; }
+html, body { margin:0; padding:0; height:100%; font-family:'Segoe UI', Roboto, sans-serif; background:#111; color:#fff; overflow:hidden; }
+.screen { position:fixed; top:0; left:0; right:0; bottom:0; }
 .hidden { display:none !important; }
 
-#winOverlay, #loseOverlay {
-  position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.85);
-  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; z-index:50;
-}
-button { font-size:20px; padding:12px 24px; border-radius:8px; border:none; background:#4caf50; color:#fff; }
+/* MENU */
+#menuBg { position:absolute; top:0; left:0; right:0; bottom:0; background-size:cover; background-position:center; filter:blur(2px) brightness(0.55); transform:scale(1.05); background-color:#222; }
+#menuOverlay { position:relative; z-index:2; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px; background:linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.55)); }
+.gameTitle { font-size:30px; font-weight:700; text-shadow:0 3px 10px rgba(0,0,0,0.7); text-align:center; padding:0 20px; margin-bottom:10px; }
+.menuBtn { width:240px; padding:16px 0; font-size:18px; font-weight:600; border:none; border-radius:30px; color:#fff; cursor:pointer; background:linear-gradient(135deg,#ff9966,#ff5e62); box-shadow:0 6px 18px rgba(0,0,0,0.4); }
+.menuBtn:active { transform:scale(0.96); }
+#chooseLevelBtn { background:linear-gradient(135deg,#56ccf2,#2f80ed); }
+
+/* LEVEL SELECT */
+#screenLevelSelect { background:#151515; display:flex; flex-direction:column; }
+#levelSelectTop { flex:0 0 auto; display:flex; align-items:center; gap:12px; padding:12px; background:#000; }
+#pageIndicator { font-size:15px; opacity:0.8; }
+.iconBtn { background:rgba(255,255,255,0.1); border:none; color:#fff; font-size:20px; width:40px; height:40px; border-radius:50%; }
+#levelGridWrap { flex:1 1 auto; overflow:hidden; }
+#levelGrid { display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:1fr; gap:10px; padding:14px; height:100%; }
+.levelTile { position:relative; border-radius:10px; overflow:hidden; background-size:cover; background-position:center; display:flex; align-items:flex-end; justify-content:center; border:2px solid rgba(255,255,255,0.15); background-color:#333; }
+.levelTile .tileLabel { width:100%; text-align:center; font-size:13px; font-weight:600; background:rgba(0,0,0,0.55); padding:4px 0; }
+.levelTile.locked { filter:grayscale(1) brightness(0.35); }
+.levelTile.locked .tileLabel { display:none; }
+.levelTile .lockIcon { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:26px; }
+.levelTile .checkIcon { position:absolute; top:6px; right:6px; font-size:18px; color:#4caf50; text-shadow:0 0 4px #000; }
+
+/* GAME SCREEN */
+#screenGame { display:flex; flex-direction:column; height:100%; background:#111; }
+#topbar { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:#000; }
+#hearts { font-size:20px; display:flex; gap:2px; }
+#hearts .lost { opacity:0.25; }
+#hintBtnWrap { position:relative; }
+#hintBtn { background:rgba(255,255,255,0.1); border:none; color:#fff; font-size:22px; width:46px; height:46px; border-radius:50%; position:relative; }
+#hintBtn.glow { animation:hintGlow 1.1s ease-in-out; }
+@keyframes hintGlow { 0%{box-shadow:0 0 0 rgba(255,215,0,0);} 50%{box-shadow:0 0 18px 6px rgba(255,215,0,0.85);} 100%{box-shadow:0 0 0 rgba(255,215,0,0);} }
+#hintCount { position:absolute; top:-4px; right:-4px; background:#e53935; color:#fff; font-size:11px; font-weight:700; border-radius:50%; width:18px; height:18px; display:flex; align-items:center; justify-content:center; }
+
+#gameArea { flex:1 1 auto; min-height:0; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#222; touch-action:none; position:relative; }
+#gameCanvas { touch-action:none; }
+
+#trayRow { flex:0 0 auto; display:flex; flex-wrap:nowrap; gap:8px; padding:10px; background:#000; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; }
+.trayItem { flex:0 0 auto; width:60px; height:60px; border:2px solid #555; border-radius:8px; background-size:contain; background-repeat:no-repeat; background-position:center; background-color:#2a2a2a; position:relative; }
+.trayItem.found { opacity:0.5; border-color:#4caf50; }
+.trayItem.found::after { content:'✔'; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:26px; color:#4caf50; font-weight:bold; background:rgba(0,0,0,0.3); border-radius:6px; }
+
+.flyingItem { position:fixed; pointer-events:none; z-index:80; background-size:contain; background-repeat:no-repeat; background-position:center; }
+
+.zoomPreview { position:fixed; z-index:90; pointer-events:none; background-size:contain; background-repeat:no-repeat; background-position:center; border:3px solid #fff; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,0.6); background-color:#222; }
+
+.overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.85); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; z-index:100; }
+.overlay button { font-size:18px; padding:12px 26px; border-radius:24px; border:none; background:linear-gradient(135deg,#43e97b,#38f9d7); color:#003; font-weight:700; }
