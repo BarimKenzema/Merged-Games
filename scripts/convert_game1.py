@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 import sys, os, re, zipfile, json, plistlib, msgpack, shutil, glob
-from PIL import Image
+from PIL import Image, ImageDraw
 
 def parse_plist_rect(s):
     nums = re.findall(r'-?\d+\.?\d*', s)
     return [float(n) for n in nums]
+
+def parse_vertices(s):
+    nums = [float(n) for n in s.split()]
+    return list(zip(nums[0::2], nums[1::2]))
 
 def rect_to_polygon(rx, ry):
     return [
@@ -13,6 +17,27 @@ def rect_to_polygon(rx, ry):
         {"x": rx, "y": ry},
         {"x": -rx, "y": ry},
     ]
+
+def apply_polygon_mask(cropped_rgba, frame_info):
+    """CONFIRMED FIX: these atlases use TexturePacker's polygon packing mode
+    (frames carry 'vertices' data), which allows irregularly-shaped sprites'
+    bounding rectangles to overlap tightly-adjacent sprites. A plain rectangular
+    crop can therefore bleed in fragments of neighboring sprites. Masking the
+    crop down to just the real polygon silhouette (using the frame's own
+    'vertices' field, already in local crop-space) eliminates those leaked
+    fragments/duplicate-looking artifacts."""
+    vertices_str = frame_info.get('vertices')
+    if not vertices_str:
+        return cropped_rgba
+    w, h = cropped_rgba.size
+    pts = parse_vertices(vertices_str)
+    mask = Image.new('L', (w, h), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(pts, fill=255)
+    r, g, b, a = cropped_rgba.split()
+    new_a = Image.composite(a, Image.new('L', (w, h), 0), mask)
+    cropped_rgba.putalpha(new_a)
+    return cropped_rgba
 
 def make_square_thumbnail(source_img, rect, out_path, size=400, pad_color=(34,34,34)):
     x, y, w, h = [int(v) for v in rect]
@@ -63,6 +88,28 @@ def convert_one(zip_path, out_root):
     canvas_width = bg_rect[2]
     canvas_height = bg_rect[3]
 
+    source_img = Image.open(webp_path).convert("RGBA")
+
+    # Build a NEW, pre-masked atlas image: every sprite/decor frame gets its
+    # polygon mask baked in (as real alpha transparency) and is pasted back at
+    # its original atlas coordinates. This keeps the existing rect-based
+    # frontend rendering contract unchanged (game.js still just crops
+    # sprite_rect out of the atlas) while eliminating leaked-neighbor artifacts.
+    masked_atlas = Image.new("RGBA", source_img.size, (0, 0, 0, 0))
+
+    # Background gets pasted as-is (no masking needed/applicable for the bg frame).
+    bx, by, bw, bh = [int(v) for v in bg_rect]
+    bg_crop = source_img.crop((bx, by, bx + bw, by + bh))
+    masked_atlas.paste(bg_crop, (bx, by))
+
+    def stamp_masked_frame(key):
+        info = frames[key]
+        rect = parse_plist_rect(info['textureRect'])
+        x, y, w, h = [int(v) for v in rect]
+        crop = source_img.crop((x, y, x + w, y + h))
+        crop = apply_polygon_mask(crop, info)
+        masked_atlas.paste(crop, (x, y), crop)
+
     items = []
     for shape in shapes:
         idx = shape['index']
@@ -72,6 +119,9 @@ def convert_one(zip_path, out_root):
         thumb_rect = parse_plist_rect(frames[thumb_key]['textureRect']) if thumb_key in frames else None
         if sprite_rect is None:
             continue
+        stamp_masked_frame(sprite_key)
+        if thumb_key in frames:
+            stamp_masked_frame(thumb_key)
         items.append({
             "index": idx,
             "sprite_rect": sprite_rect,
@@ -90,6 +140,7 @@ def convert_one(zip_path, out_root):
         if key not in frames:
             continue
         rect = parse_plist_rect(frames[key]['textureRect'])
+        stamp_masked_frame(key)
         decor.append({
             "sprite_rect": rect,
             "x": layer['x'],
@@ -101,11 +152,10 @@ def convert_one(zip_path, out_root):
     puzzle_folder_name = f"game1_{puzzle_id}"
     out_dir = os.path.join(out_root, puzzle_folder_name)
     os.makedirs(out_dir, exist_ok=True)
-    shutil.copy(webp_path, os.path.join(out_dir, "atlas.webp"))
+    masked_atlas.save(os.path.join(out_dir, "atlas.webp"))
 
-    source_img = Image.open(webp_path)
-    make_square_thumbnail(source_img, bg_rect, os.path.join(out_dir, "thumb.jpg"))
-    make_bg_preview(source_img, bg_rect, os.path.join(out_dir, "bg.jpg"))
+    make_square_thumbnail(masked_atlas, bg_rect, os.path.join(out_dir, "thumb.jpg"))
+    make_bg_preview(masked_atlas, bg_rect, os.path.join(out_dir, "bg.jpg"))
 
     data = {
         "puzzle_id": puzzle_folder_name,
