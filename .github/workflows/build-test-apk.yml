@@ -20,8 +20,8 @@ jobs:
 
       - name: Pick random sample URLs
         run: |
-          shuf -n 4 download_list.txt > selected_game1.txt
-          shuf -n 4 yolo_download_list.txt > selected_game2.txt
+          shuf -n 6 download_list.txt > selected_game1.txt
+          shuf -n 6 yolo_download_list.txt > selected_game2.txt
           echo "== Game 1 samples =="
           cat selected_game1.txt
           echo "== Game 2 samples =="
