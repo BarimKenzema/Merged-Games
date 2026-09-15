@@ -1,0 +1,113 @@
+name: List Repository Files & Contents
+
+on:
+  workflow_dispatch:
+    inputs:
+      exclude_contents:
+        description: 'Comma-separated patterns to exclude file CONTENTS (e.g. *.lock, *.json, docs/*)'
+        required: false
+        default: ''
+        type: string
+      exclude_completely:
+        description: 'Comma-separated patterns to COMPLETELY ignore (e.g. *.png, node_modules/*)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  collect-and-display:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Process and Print Files
+        shell: python
+        env:
+          EXCLUDE_CONTENTS: ${{ inputs.exclude_contents }}
+          EXCLUDE_COMPLETELY: ${{ inputs.exclude_completely }}
+        run: |
+          import os
+          import fnmatch
+
+          # Get inputs and split by comma
+          raw_ex_content = os.getenv('EXCLUDE_CONTENTS', '').strip()
+          raw_ex_complete = os.getenv('EXCLUDE_COMPLETELY', '').strip()
+
+          exclude_content_patterns = [p.strip() for p in raw_ex_content.split(',') if p.strip()]
+          exclude_complete_patterns = [p.strip() for p in raw_ex_complete.split(',') if p.strip()]
+
+          output_file = "repository_contents.txt"
+
+          def matches_any(path, patterns):
+              return any(fnmatch.fnmatch(path, p) or fnmatch.fnmatch(os.path.basename(path), p) for p in patterns)
+
+          def is_binary(file_path):
+              try:
+                  with open(file_path, 'rb') as f:
+                      chunk = f.read(1024)
+                      return b'\0' in chunk  # Heuristic for binary files
+              except Exception:
+                  return True
+
+          total_files = 0
+          printed_contents_count = 0
+
+          with open(output_file, "w", encoding="utf-8") as out:
+              out.write("=" * 80 + "\n")
+              out.write(" REPOSITORY CONTENTS SUMMARY\n")
+              out.write("=" * 80 + "\n\n")
+
+              for root, dirs, files in os.walk("."):
+                  # Ignore .git folder completely
+                  if '.git' in dirs:
+                      dirs.remove('.git')
+
+                  for file in sorted(files):
+                      # Skip the generated output file itself
+                      if file == output_file:
+                          continue
+
+                      full_path = os.path.join(root, file)
+                      rel_path = os.path.relpath(full_path, ".")
+
+                      # 1. Check if completely excluded
+                      if matches_any(rel_path, exclude_complete_patterns):
+                          continue
+
+                      total_files += 1
+
+                      out.write("\n" + "#" * 80 + "\n")
+                      out.write(f"FILE: {rel_path}\n")
+                      out.write("#" * 80 + "\n")
+
+                      # 2. Check if content should be excluded
+                      if matches_any(rel_path, exclude_content_patterns):
+                          out.write("[CONTENT EXCLUDED BY FILTER]\n")
+                      # 3. Check if binary file
+                      elif is_binary(full_path):
+                          out.write("[BINARY FILE - CONTENT OMITTED]\n")
+                      # 4. Print actual content
+                      else:
+                          try:
+                              with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+                                  content = f.read()
+                                  out.write(content if content.strip() else "[EMPTY FILE]\n")
+                                  printed_contents_count += 1
+                          except Exception as e:
+                              out.write(f"[ERROR READING FILE: {e}]\n")
+
+                      out.write("\n")
+
+              summary = f"\nSummary: {total_files} total files processed. Contents displayed for {printed_contents_count} files.\n"
+              out.write(summary)
+
+          # Print directly to the GitHub Action logs
+          with open(output_file, 'r', encoding='utf-8') as out:
+              print(out.read())
+
+      - name: Upload Output as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-contents
+          path: repository_contents.txt
