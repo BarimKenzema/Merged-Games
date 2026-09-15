@@ -14,14 +14,23 @@ def rect_to_polygon(rx, ry):
         {"x": -rx, "y": ry},
     ]
 
-def make_thumbnail(atlas_path, bg_rect, out_path, max_w=320):
-    img = Image.open(atlas_path).convert("RGB")
-    x, y, w, h = [int(v) for v in bg_rect]
-    cropped = img.crop((x, y, x + w, y + h))
-    ratio = max_w / w
-    new_size = (max_w, max(1, int(h * ratio)))
-    thumb = cropped.resize(new_size, Image.LANCZOS)
-    thumb.save(out_path, "JPEG", quality=75)
+def make_square_thumbnail(source_img, rect, out_path, size=400, pad_color=(34,34,34)):
+    x, y, w, h = [int(v) for v in rect]
+    cropped = source_img.crop((x, y, x + w, y + h)).convert("RGB")
+    scale = min(size / w, size / h)
+    new_w, new_h = max(1, int(w*scale)), max(1, int(h*scale))
+    resized = cropped.resize((new_w, new_h), Image.LANCZOS)
+    canvas = Image.new("RGB", (size, size), pad_color)
+    canvas.paste(resized, ((size-new_w)//2, (size-new_h)//2))
+    canvas.save(out_path, "JPEG", quality=80)
+
+def make_bg_preview(source_img, rect, out_path, max_dim=1000):
+    x, y, w, h = [int(v) for v in rect]
+    cropped = source_img.crop((x, y, x + w, y + h)).convert("RGB")
+    scale = min(1.0, max_dim / max(w, h))
+    new_size = (max(1,int(w*scale)), max(1,int(h*scale)))
+    resized = cropped.resize(new_size, Image.LANCZOS) if scale < 1.0 else cropped
+    resized.save(out_path, "JPEG", quality=85)
 
 def convert_one(zip_path, out_root):
     base_name = os.path.splitext(os.path.basename(zip_path))[0]
@@ -68,7 +77,7 @@ def convert_one(zip_path, out_root):
             "sprite_rect": sprite_rect,
             "thumb_rect": thumb_rect,
             "x": shape['x'],
-            "y": canvas_height - shape['y'],   # FIX: flip Cocos2d bottom-left origin -> top-left screen space
+            "y": canvas_height - shape['y'],
             "rotation": shape.get('rotation', 0),
             "zOrder": shape.get('zOrder', 0),
             "hitbox_polygon": rect_to_polygon(shape['rx'], shape['ry'])
@@ -84,7 +93,7 @@ def convert_one(zip_path, out_root):
         decor.append({
             "sprite_rect": rect,
             "x": layer['x'],
-            "y": canvas_height - layer['y'],   # FIX: same flip
+            "y": canvas_height - layer['y'],
             "rotation": 0,
             "zOrder": layer.get('zOrder', 0)
         })
@@ -94,14 +103,16 @@ def convert_one(zip_path, out_root):
     os.makedirs(out_dir, exist_ok=True)
     shutil.copy(webp_path, os.path.join(out_dir, "atlas.webp"))
 
-    thumb_path = os.path.join(out_dir, "thumb.jpg")
-    make_thumbnail(webp_path, bg_rect, thumb_path)
+    source_img = Image.open(webp_path)
+    make_square_thumbnail(source_img, bg_rect, os.path.join(out_dir, "thumb.jpg"))
+    make_bg_preview(source_img, bg_rect, os.path.join(out_dir, "bg.jpg"))
 
     data = {
         "puzzle_id": puzzle_folder_name,
         "source_game": "game1",
         "atlas": "atlas.webp",
         "thumbnail": "thumb.jpg",
+        "background": "bg.jpg",
         "canvas_width": canvas_width,
         "canvas_height": canvas_height,
         "background_rect": bg_rect,
