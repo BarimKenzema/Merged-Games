@@ -5,9 +5,13 @@ function loadGlobal(){
 }
 function saveGlobal(g){ localStorage.setItem('hog_global', JSON.stringify(g)); }
 
+const debugLines = [];
 function debugLog(msg){
+  const t = new Date().toISOString().substr(11,8);
+  debugLines.push(`[${t}] ${msg}`);
+  while (debugLines.length > 10) debugLines.shift();
   const el = document.getElementById('debugFound');
-  if (el) el.textContent = msg;
+  if (el) el.textContent = debugLines.join('\n');
 }
 
 let manifest = null;
@@ -163,7 +167,7 @@ async function openGame(index){
   buildTray();
   updateHintBadge();
   startGlow();
-  debugLog(`Puzzle: ${entry.puzzle_id}  items: ${gs.puzzleData.items.length}  found: []`);
+  debugLog(`OPENED puzzle=${entry.puzzle_id} totalItems=${gs.puzzleData.items.length}`);
   render();
 }
 
@@ -187,6 +191,21 @@ function applyTransform(){
 function getTouchDist(t){ const dx=t[0].clientX-t[1].clientX, dy=t[0].clientY-t[1].clientY; return Math.sqrt(dx*dx+dy*dy); }
 function getMidpoint(t){ return { x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2 }; }
 
+// CONFIRMED FIX: previous version had a branch that HARD-OVERRODE the pinch
+// anchor position whenever content was smaller than the viewport on an axis
+// (common now with contain-fit's letterboxing), forcing it to a fixed point
+// regardless of finger position - that was the "always zooms to one side" bug.
+// This version computes a proper [lo,hi] range regardless of which bound is
+// numerically smaller, and simply clamps into that range without forcing an
+// exact override, letting the anchor math keep control.
+function clampAxis(value, areaSize, flexOffset, scaledSize){
+  const optionA = areaSize - flexOffset - scaledSize;
+  const optionB = -flexOffset;
+  const lo = Math.min(optionA, optionB);
+  const hi = Math.max(optionA, optionB);
+  return Math.max(lo, Math.min(hi, value));
+}
+
 function clampPan(){
   const area = document.getElementById('gameArea');
   const areaW = area.clientWidth, areaH = area.clientHeight;
@@ -196,21 +215,8 @@ function clampPan(){
   const flexOffsetX = (areaW - W) / 2;
   const flexOffsetY = (areaH - H) / 2;
   const scaledW = W * s, scaledH = H * s;
-
-  if (scaledW <= areaW) {
-    viewState.x = (areaW - scaledW) / 2 - flexOffsetX;
-  } else {
-    const minX = areaW - flexOffsetX - scaledW;
-    const maxX = -flexOffsetX;
-    viewState.x = Math.max(minX, Math.min(maxX, viewState.x));
-  }
-  if (scaledH <= areaH) {
-    viewState.y = (areaH - scaledH) / 2 - flexOffsetY;
-  } else {
-    const minY = areaH - flexOffsetY - scaledH;
-    const maxY = -flexOffsetY;
-    viewState.y = Math.max(minY, Math.min(maxY, viewState.y));
-  }
+  viewState.x = clampAxis(viewState.x, areaW, flexOffsetX, scaledW);
+  viewState.y = clampAxis(viewState.y, areaH, flexOffsetY, scaledH);
 }
 
 canvas.addEventListener('touchstart', e => {
@@ -310,11 +316,9 @@ function render(){
     }
     drawList.push({type:'decor', zOrder:d.zOrder, data:d});
   });
-  const drawnItemIndices = [];
   gs.puzzleData.items.forEach(it => {
     if (!gs.found.has(it.index) && !gs.pending.has(it.index)) {
       drawList.push({type:'item', zOrder:it.zOrder, data:it});
-      drawnItemIndices.push(it.index);
     }
   });
   drawList.sort((a,b) => a.zOrder-b.zOrder);
@@ -327,8 +331,6 @@ function render(){
     ctx.drawImage(gs.atlasImg, rect[0], rect[1], rect[2], rect[3], -rect[2]/2, -rect[3]/2, rect[2], rect[3]);
     ctx.restore();
   });
-
-  debugLog(`found: [${[...gs.found].join(',')}]  pending: [${[...gs.pending].join(',')}]  stillDrawnItems: [${drawnItemIndices.join(',')}]`);
 }
 
 function pointInPolygon(px,py,poly){
@@ -353,10 +355,10 @@ function handleClick(clickX, clickY){
   }
   if (candidates.length){
     candidates.sort((a,b) => b.zOrder-a.zOrder);
-    debugLog(`Clicked (${clickX.toFixed(0)},${clickY.toFixed(0)}) -> matched item index ${candidates[0].index} (of ${candidates.length} candidates)`);
+    debugLog(`CLICK (${clickX.toFixed(0)},${clickY.toFixed(0)}) -> HIT index=${candidates[0].index} (${candidates.length} candidates)`);
     startFoundAnimation(candidates[0]);
   } else {
-    debugLog(`Clicked (${clickX.toFixed(0)},${clickY.toFixed(0)}) -> no match (miss)`);
+    debugLog(`CLICK (${clickX.toFixed(0)},${clickY.toFixed(0)}) -> MISS`);
     registerMiss();
   }
 }
@@ -364,6 +366,7 @@ function handleClick(clickX, clickY){
 function startFoundAnimation(item){
   gs.pending.add(item.index);
   render();
+  debugLog(`PENDING added index=${item.index}`);
 
   const canvasRect = canvas.getBoundingClientRect();
   const scaleX = canvasRect.width/canvas.width, scaleY = canvasRect.height/canvas.height;
@@ -417,6 +420,7 @@ function moveTrayItemToEnd(trayEl){
 function finalizeFound(index){
   gs.pending.delete(index);
   gs.found.add(index);
+  debugLog(`FOUND finalized index=${index}. found set=[${[...gs.found].join(',')}]`);
   const trayEl = document.getElementById('tray_'+index);
   if (trayEl) {
     trayEl.classList.add('found');
