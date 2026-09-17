@@ -1,7 +1,10 @@
-name: Build Test APK
+name: Build Base APK (16 bundled puzzles)
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -9,6 +12,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -18,39 +23,62 @@ jobs:
       - name: Install Python dependencies
         run: pip install msgpack UnityPy texture2ddecoder Pillow numpy
 
-      - name: Pick random sample URLs
+      - name: Check if base selection already exists
         run: |
-          shuf -n 4 download_list.txt > selected_game1.txt
-          shuf -n 4 yolo_download_list.txt > selected_game2.txt
-          echo "== Game 1 samples =="
-          cat selected_game1.txt
-          echo "== Game 2 samples =="
-          cat selected_game2.txt
+          if [ -f base_apk_selection_game1.txt ] && [ -f base_apk_selection_game2.txt ]; then
+            echo "BASE_SELECTION_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "BASE_SELECTION_EXISTS=false" >> $GITHUB_ENV
+          fi
 
-      - name: Download Game 1 samples
+      - name: Select puzzles for base app (first run only - creates permanent selection)
+        if: env.BASE_SELECTION_EXISTS == 'false'
+        run: |
+          python3 scripts/filter_new_urls.py game1 download_list.txt converted_ids_game1.txt base_apk_selection_game1.txt 8
+          python3 scripts/filter_new_urls.py game2 yolo_download_list.txt converted_ids_game2.txt base_apk_selection_game2.txt 8
+
+      - name: Download Game 1 puzzles
         run: |
           mkdir -p raw_game1
           while read -r fname url; do
             echo "Downloading $url -> raw_game1/$fname"
             curl -L --fail -o "raw_game1/$fname" "$url" || echo "FAILED: $url"
-          done < selected_game1.txt
+          done < base_apk_selection_game1.txt
 
-      - name: Download Game 2 samples
+      - name: Download Game 2 puzzles
         run: |
           mkdir -p raw_game2
           while read -r id url; do
             echo "Downloading $url -> raw_game2/$id"
             curl -L --fail -o "raw_game2/$id" "$url" || echo "FAILED: $url"
-          done < selected_game2.txt
+          done < base_apk_selection_game2.txt
 
-      - name: Convert Game 1 puzzles
+      - name: Convert Game 1 puzzles (no ledger arg - base set is pinned by selection file)
         run: python3 scripts/convert_game1.py raw_game1 www/puzzles
 
-      - name: Convert Game 2 puzzles
+      - name: Convert Game 2 puzzles (no ledger arg - base set is pinned by selection file)
         run: python3 scripts/convert_game2.py raw_game2 www/puzzles
 
-      - name: Generate manifest
-        run: python3 scripts/generate_manifest.py www/puzzles www/manifest.json
+      - name: Generate manifest (reuses committed base_manifest.json order if present)
+        run: |
+          cp base_manifest.json www/manifest.json 2>/dev/null || true
+          python3 scripts/generate_manifest.py www/puzzles www/manifest.json
+          cp www/manifest.json base_manifest.json
+
+      - name: Register base puzzle IDs in shared ledger (first run only)
+        if: env.BASE_SELECTION_EXISTS == 'false'
+        run: |
+          python3 scripts/update_ledger.py game1 www/puzzles converted_ids_game1.txt
+          python3 scripts/update_ledger.py game2 www/puzzles converted_ids_game2.txt
+
+      - name: Commit base app metadata
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add base_apk_selection_game1.txt base_apk_selection_game2.txt base_manifest.json converted_ids_game1.txt converted_ids_game2.txt
+          git commit -m "Update base APK metadata" || echo "No changes to commit"
+          git pull --rebase
+          git push
 
       - name: Debug - list converted puzzles
         run: find www/puzzles -maxdepth 1 -type d
@@ -86,7 +114,6 @@ jobs:
           echo "Using sdkmanager at: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-          echo "sdkmanager_path=$SDKMANAGER" >> $GITHUB_ENV
 
       - name: Build debug APK
         working-directory: android
