@@ -17,7 +17,7 @@ function debugLog(msg){
 let manifest = null;
 let cameFrom = 'menu';
 let levelPage = 0;
-const PER_PAGE = 16;
+const PER_PAGE = 8;
 
 const screens = ['screenMenu','screenLevelSelect','screenGame'];
 function showScreen(id){
