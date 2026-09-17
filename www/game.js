@@ -228,7 +228,7 @@ canvas.addEventListener('touchstart', e => {
     pinchStartViewX = viewState.x;
     pinchStartViewY = viewState.y;
   }
-  else if (e.touches.length===1){ panStart={x:e.touches[0].clientX-viewState.x, y:e.touches[0].clientY-viewState.y}; }
+  else if (e.touches.length===1 && viewState.scale > 1.01){ panStart={x:e.touches[0].clientX-viewState.x, y:e.touches[0].clientY-viewState.y}; }
 }, {passive:true});
 canvas.addEventListener('touchmove', e => {
   didMove=true;
