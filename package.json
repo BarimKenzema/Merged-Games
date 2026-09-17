@@ -5,7 +5,8 @@
   "dependencies": {
     "@capacitor/core": "^5.5.1",
     "@capacitor/android": "^5.5.1",
-    "@capacitor/app": "^5.0.6"
+    "@capacitor/app": "^5.0.6",
+    "@capacitor/filesystem": "^5.2.2"
   },
   "devDependencies": {
     "@capacitor/cli": "^5.5.1"
