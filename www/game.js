@@ -215,8 +215,20 @@ function clampPan(){
   const flexOffsetX = (areaW - W) / 2;
   const flexOffsetY = (areaH - H) / 2;
   const scaledW = W * s, scaledH = H * s;
-  viewState.x = clampAxis(viewState.x, areaW, flexOffsetX, scaledW);
-  viewState.y = clampAxis(viewState.y, areaH, flexOffsetY, scaledH);
+  // When content already fits within the viewport on an axis (always true for
+  // BOTH axes at scale==1 since we use contain-fit), force exact centering on
+  // that axis instead of allowing any pan - this guarantees full zoom-out
+  // always returns to a perfectly centered view.
+  if (scaledW <= areaW + 0.5) {
+    viewState.x = (areaW - scaledW) / 2 - flexOffsetX;
+  } else {
+    viewState.x = clampAxis(viewState.x, areaW, flexOffsetX, scaledW);
+  }
+  if (scaledH <= areaH + 0.5) {
+    viewState.y = (areaH - scaledH) / 2 - flexOffsetY;
+  } else {
+    viewState.y = clampAxis(viewState.y, areaH, flexOffsetY, scaledH);
+  }
 }
 
 canvas.addEventListener('touchstart', e => {
