@@ -86,12 +86,50 @@ def _dilate_mask(mask_bool, px=1):
         out = grown
     return out
 
-def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=0):
-    """CONFIRMED FIX (see project history): 'vertices' is a triangulated MESH
-    vertex list (paired with 'triangles'), not a perimeter outline. Filling
-    actual triangles + binary threshold (dilate_px=0) is the confirmed-final
-    fix for both the fragment/overlap bug and the crease bug. Do not change
-    dilate_px back to a nonzero default without re-reading that history."""
+def _spread_edge_color(arr, mask_bool, spread_px):
+    """DEFENSIVE FIX (crease investigation): extends the polygon-interior's
+    own real edge color outward into the immediately surrounding, now-
+    invisible (alpha=0) margin, using the same grow-nearest-neighbor
+    technique as decontaminate_edges(), but seeded from the TRUE polygon
+    shape instead of an alpha threshold. Multiple isolated tests (Python/
+    Pillow resize, real-browser Canvas2D at 1:1 and scaled, both against
+    solid backgrounds) failed to reproduce the crease in isolation, meaning
+    the exact leak pathway (background compositing? CSS transform scaling?
+    mobile GPU specifics?) was not pinned down. This fix does not depend on
+    knowing the exact pathway: regardless of WHICH mechanism ends up
+    sampling slightly past an item's true edge, it will now find a
+    plausible extension of the item's own color instead of unrelated
+    neighbor/background color. Only touches pixels that are already fully
+    invisible (alpha stays 0) - cannot affect hitboxes or visible size."""
+    rgb = arr[:, :, :3].astype(np.float32).copy()
+    filled = mask_bool.copy()
+    for _ in range(spread_px):
+        if filled.all():
+            break
+        unfilled = ~filled
+        sum_rgb = np.zeros_like(rgb)
+        count = np.zeros(filled.shape, dtype=np.float32)
+        for dy, dx in [(-1,0),(1,0),(0,-1),(0,1)]:
+            n_filled = _neighbor(filled, dy, dx)
+            n_rgb = _neighbor(rgb, dy, dx)
+            sum_rgb[n_filled] += n_rgb[n_filled]
+            count[n_filled] += 1
+        newly = unfilled & (count > 0)
+        if not newly.any():
+            break
+        rgb[newly] = sum_rgb[newly] / count[newly][:, None]
+        filled = filled | newly
+    out = arr.copy()
+    out[:, :, :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+    return out
+
+def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=0, spread_px=4):
+    """'vertices' is a triangulated MESH vertex list (paired with
+    'triangles'), not a perimeter outline. Filling actual triangles +
+    binary threshold (dilate_px=0) is the confirmed-final fix for the
+    fragment/overlap bug. spread_px adds edge-color bleeding into the
+    invisible margin as a defensive measure against the still-unresolved
+    crease issue - see _spread_edge_color()."""
     if not vertices_str or not triangles_str:
         return cropped_rgba
     w, h = cropped_rgba.size
@@ -107,6 +145,8 @@ def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dila
     if dilate_px > 0:
         mask_bool = _dilate_mask(mask_bool, dilate_px)
     arr = np.array(cropped_rgba)
+    if spread_px > 0:
+        arr = _spread_edge_color(arr, mask_bool, spread_px)
     arr[..., 3] = np.where(mask_bool, arr[..., 3], 0)
     return Image.fromarray(arr, 'RGBA')
 
