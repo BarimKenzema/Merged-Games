@@ -250,29 +250,31 @@ canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   didMove=false;
   if (e.touches.length===2){
-    touchStartDist=getTouchDist(e.touches);
-    touchStartScale=viewState.scale;
-    pinchStartRect = canvas.getBoundingClientRect();
-    pinchStartViewX = viewState.x;
-    pinchStartViewY = viewState.y;
+    lastPinchDist = getTouchDist(e.touches);
   }
   else if (e.touches.length===1 && viewState.scale > 1.01){ panStart={x:e.touches[0].clientX-viewState.x, y:e.touches[0].clientY-viewState.y}; }
 }, {passive:false});
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
   didMove=true;
-  if (e.touches.length===2 && touchStartDist){
-    const newScale = Math.max(1, Math.min(4, touchStartScale*(getTouchDist(e.touches)/touchStartDist)));
+  if (e.touches.length===2 && lastPinchDist){
+    // CONFIRMED REWRITE: anchor recomputed fresh EVERY frame from the CURRENT
+    // viewState (not a snapshot frozen at gesture start). Standard drift-free
+    // approach: each frame independently solves "whatever local point is
+    // currently under the fingers, keep it under the fingers."
+    const newDist = getTouchDist(e.touches);
     const mid = getMidpoint(e.touches);
-    const localX = (mid.x - pinchStartRect.left) / touchStartScale;
-    const localY = (mid.y - pinchStartRect.top) / touchStartScale;
-    viewState.x = mid.x - pinchStartRect.left + pinchStartViewX - newScale*localX;
-    viewState.y = mid.y - pinchStartRect.top + pinchStartViewY - newScale*localY;
+    const ratio = newDist / lastPinchDist;
+    const newScale = Math.max(1, Math.min(4, viewState.scale * ratio));
+    const localX = (mid.x - naturalRect.left - viewState.x) / viewState.scale;
+    const localY = (mid.y - naturalRect.top - viewState.y) / viewState.scale;
+    viewState.x = mid.x - naturalRect.left - newScale * localX;
+    viewState.y = mid.y - naturalRect.top - newScale * localY;
     viewState.scale = newScale;
-    const preClampX = viewState.x.toFixed(0), preClampY = viewState.y.toFixed(0);
+    lastPinchDist = newDist;
     clampPan();
-    debugLog(`PINCH mid=(${mid.x.toFixed(0)},${mid.y.toFixed(0)}) scale=${newScale.toFixed(2)} preClamp=(${preClampX},${preClampY}) postClamp=(${viewState.x.toFixed(0)},${viewState.y.toFixed(0)})`);
     applyTransform();
+    debugLog(`PINCH mid=(${mid.x.toFixed(0)},${mid.y.toFixed(0)}) scale=${newScale.toFixed(2)} view=(${viewState.x.toFixed(0)},${viewState.y.toFixed(0)})`);
   } else if (e.touches.length===1 && panStart){
     viewState.x = e.touches[0].clientX - panStart.x;
     viewState.y = e.touches[0].clientY - panStart.y;
@@ -280,7 +282,7 @@ canvas.addEventListener('touchmove', e => {
     applyTransform();
   }
 }, {passive:false});
-canvas.addEventListener('touchend', e => { if (e.touches.length===0){ touchStartDist=null; panStart=null; pinchStartRect=null; } });
+canvas.addEventListener('touchend', e => { if (e.touches.length===0){ lastPinchDist=null; panStart=null; } });
 function buildHearts(){
   heartsDiv.innerHTML='';
   for (let i=0;i<gs.maxLives;i++){
