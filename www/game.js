@@ -21,6 +21,101 @@ function clearProgress(puzzleId){
   }
 }
 
+// ---------------------------------------------------------------------------
+// PUZZLE PACK SUPPORT
+//
+// Two puzzle sources exist:
+//   - "bundled": the ~16 puzzles baked into www/puzzles/ at build time, listed
+//     in www/manifest.json, loaded via plain relative fetch()/img paths.
+//   - "pack": external puzzle folders placed by the user (via Root Explorer
+//     or `adb push`, no in-app download feature) into this app's own
+//     external files directory at puzzle_packs/<packName>/, each containing
+//     its own self-contained manifest.json (same shape as the bundled one).
+//
+// The MERGED manifest order is: bundled puzzles first (fixed, permanent),
+// then each discovered pack folder in ascending name order, each pack's
+// internal order preserved exactly as generated. This order is never
+// reshuffled after the fact - new packs are only ever appended - because
+// progress tracking (highestUnlockedIndex/lastPlayedIndex) is POSITIONAL
+// (an index into this merged array), so silently reordering it would corrupt
+// existing players' unlock progress. (completedIds is keyed by puzzle_id
+// string, so it's safe either way, but the index-based fields are not.)
+// ---------------------------------------------------------------------------
+
+const PACKS_DIR = 'puzzle_packs';
+const PACKS_DIRECTORY_TYPE = 'EXTERNAL'; // maps to context.getExternalFilesDir() - no permissions needed
+
+function getFilesystemPlugin(){
+  return (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.Filesystem) || null;
+}
+
+async function buildMergedManifest(){
+  const result = [];
+
+  const res = await fetch('manifest.json');
+  const bundled = await res.json();
+  bundled.puzzles.forEach(p => result.push(Object.assign({}, p, { origin: 'bundled' })));
+
+  const fs = getFilesystemPlugin();
+  if (fs) {
+    let packNames = [];
+    try {
+      const listing = await fs.readdir({ path: PACKS_DIR, directory: PACKS_DIRECTORY_TYPE });
+      packNames = (listing.files || [])
+        .map(f => (typeof f === 'string' ? f : f.name))
+        .filter(Boolean)
+        .sort();
+    } catch (e) {
+      packNames = []; // puzzle_packs/ doesn't exist yet - totally normal, no packs installed
+    }
+
+    for (const packName of packNames) {
+      try {
+        const manifestPath = `${PACKS_DIR}/${packName}/manifest.json`;
+        const readResult = await fs.readFile({ path: manifestPath, directory: PACKS_DIRECTORY_TYPE, encoding: 'utf8' });
+        const packManifest = JSON.parse(readResult.data);
+        packManifest.puzzles.forEach(p => result.push(Object.assign({}, p, { origin: 'pack', packName })));
+      } catch (e) {
+        console.warn('Skipping unreadable/invalid pack:', packName, e);
+      }
+    }
+  }
+
+  return { puzzles: result };
+}
+
+// Resolves a path that is relative to the PUZZLE-SOURCE ROOT (i.e. relative
+// to "puzzles/" for bundled, or relative to "puzzle_packs/<packName>/" for
+// a pack) into an actually-loadable URL for <img>/canvas/background-image use.
+async function resolveUrl(entry, relativePath){
+  if (entry.origin !== 'pack') {
+    return `puzzles/${relativePath}`;
+  }
+  const fs = getFilesystemPlugin();
+  if (!entry._packRootUri) {
+    const res = await fs.getUri({ path: `${PACKS_DIR}/${entry.packName}`, directory: PACKS_DIRECTORY_TYPE });
+    entry._packRootUri = res.uri;
+  }
+  return Capacitor.convertFileSrc(`${entry._packRootUri}/${relativePath}`);
+}
+
+// data.json needs real text content (not just a displayable URL), so it's
+// read directly via the Filesystem plugin rather than through convertFileSrc.
+async function getDataJson(entry){
+  const relPath = `${entry.puzzle_id}/data.json`;
+  if (entry.origin !== 'pack') {
+    const res = await fetch(`puzzles/${relPath}`);
+    return res.json();
+  }
+  const fs = getFilesystemPlugin();
+  const fileRes = await fs.readFile({
+    path: `${PACKS_DIR}/${entry.packName}/${relPath}`,
+    directory: PACKS_DIRECTORY_TYPE,
+    encoding: 'utf8'
+  });
+  return JSON.parse(fileRes.data);
+}
+
 let manifest = null;
 let cameFrom = 'menu';
 let levelPage = 0;
@@ -33,17 +128,16 @@ function showScreen(id){
 function isScreenVisible(id){ return !document.getElementById(id).classList.contains('hidden'); }
 
 async function init(){
-  const res = await fetch('manifest.json');
-  manifest = await res.json();
-  setupMenuBackground();
+  manifest = await buildMergedManifest();
+  await setupMenuBackground();
   showScreen('screenMenu');
   setupBackButtonHandling();
 }
 
-function setupMenuBackground(){
+async function setupMenuBackground(){
   if (!manifest.puzzles.length) return;
   const pick = manifest.puzzles[Math.floor(Math.random()*manifest.puzzles.length)];
-  const url = `puzzles/${pick.background}`;
+  const url = await resolveUrl(pick, pick.background);
   document.getElementById('menuBg').style.backgroundImage = `url(${url})`;
   document.getElementById('menuBgClear').style.backgroundImage = `url(${url})`;
 }
@@ -58,14 +152,14 @@ document.getElementById('exitBtn').addEventListener('click', () => { confirmExit
 document.getElementById('levelBackBtn').addEventListener('click', () => { handleBackNavigation(); });
 document.getElementById('gameBackBtn').addEventListener('click', () => { handleBackNavigation(); });
 
-function openLevelSelect(){
+async function openLevelSelect(){
   const g = loadGlobal();
   levelPage = Math.min(levelPage, Math.floor(g.highestUnlockedIndex/PER_PAGE));
-  renderLevelPage();
+  await renderLevelPage();
   showScreen('screenLevelSelect');
 }
 
-function renderLevelPage(){
+async function renderLevelPage(){
   const g = loadGlobal();
   const grid = document.getElementById('levelGrid');
   grid.innerHTML = '';
@@ -79,7 +173,12 @@ function renderLevelPage(){
     const completed = g.completedIds.includes(entry.puzzle_id);
     const tile = document.createElement('div');
     tile.className = 'levelTile' + (unlocked ? '' : ' locked');
-    tile.style.backgroundImage = `url(puzzles/${entry.thumbnail})`;
+    try {
+      const thumbUrl = await resolveUrl(entry, entry.thumbnail);
+      tile.style.backgroundImage = `url(${thumbUrl})`;
+    } catch (e) {
+      console.warn('Failed to resolve thumbnail for', entry.puzzle_id, e);
+    }
     tile.innerHTML = unlocked
       ? `<div class="tileLabel">Level ${idx+1}</div>${completed ? '<div class="checkIcon">✔</div>' : ''}`
       : `<div class="lockIcon">🔒</div>`;
@@ -117,6 +216,7 @@ levelGridWrap.addEventListener('touchend', e => {
 
 const gs = {
   levelIndex: 0,
+  entry: null,
   puzzleData: null,
   atlasImg: null,
   found: new Set(),
@@ -148,25 +248,34 @@ async function openGame(index){
 
   hideOverlays();
   const entry = manifest.puzzles[index];
-  const res = await fetch(`puzzles/${entry.puzzle_id}/data.json`);
-  gs.puzzleData = await res.json();
+  gs.entry = entry;
 
-  // CONFIRMED FIX: restore in-progress state (found items + remaining lives)
-  // if this puzzle was left mid-way via back button / app exit, instead of
-  // always resetting to a fresh start.
-  const saved = (g.inProgress && g.inProgress[entry.puzzle_id]) || null;
-  gs.found = new Set(saved ? saved.found : []);
-  gs.pending = new Set();
-  gs.lives = saved ? saved.lives : gs.maxLives;
+  try {
+    gs.puzzleData = await getDataJson(entry);
 
-  document.getElementById('gameAreaBg').style.backgroundImage = `url(puzzles/${entry.puzzle_id}/${gs.puzzleData.background})`;
+    // CONFIRMED FIX: restore in-progress state (found items + remaining lives)
+    // if this puzzle was left mid-way via back button / app exit, instead of
+    // always resetting to a fresh start.
+    const saved = (g.inProgress && g.inProgress[entry.puzzle_id]) || null;
+    gs.found = new Set(saved ? saved.found : []);
+    gs.pending = new Set();
+    gs.lives = saved ? saved.lives : gs.maxLives;
 
-  const img = new Image();
-  await new Promise((resolve,reject) => {
-    img.onload = resolve; img.onerror = reject;
-    img.src = `puzzles/${entry.puzzle_id}/${gs.puzzleData.atlas}`;
-  });
-  gs.atlasImg = img;
+    const bgUrl = await resolveUrl(entry, `${entry.puzzle_id}/${gs.puzzleData.background}`);
+    document.getElementById('gameAreaBg').style.backgroundImage = `url(${bgUrl})`;
+
+    const atlasUrl = await resolveUrl(entry, `${entry.puzzle_id}/${gs.puzzleData.atlas}`);
+    const img = new Image();
+    await new Promise((resolve,reject) => {
+      img.onload = resolve; img.onerror = reject;
+      img.src = atlasUrl;
+    });
+    gs.atlasImg = img;
+  } catch (e) {
+    console.error('Failed to load puzzle', entry, e);
+    alert('This puzzle could not be loaded (missing or corrupt files). Please pick another.');
+    return;
+  }
 
   showScreen('screenGame');
 
@@ -611,15 +720,15 @@ hintBtn.addEventListener('click', () => {
   useHintOnItem(pick);
 });
 
-function handleBackNavigation(){
+async function handleBackNavigation(){
   if (isScreenVisible('screenGame')) {
     stopGlow();
-    if (cameFrom === 'levelSelect') openLevelSelect();
-    else { setupMenuBackground(); showScreen('screenMenu'); }
+    if (cameFrom === 'levelSelect') { await openLevelSelect(); }
+    else { await setupMenuBackground(); showScreen('screenMenu'); }
     return;
   }
   if (isScreenVisible('screenLevelSelect')) {
-    setupMenuBackground();
+    await setupMenuBackground();
     showScreen('screenMenu');
     return;
   }
