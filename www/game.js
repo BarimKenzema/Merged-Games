@@ -516,25 +516,37 @@ function stopGlow(){ if (glowInterval){ clearInterval(glowInterval); glowInterva
 function screenCenterForItem(item, targetScale){
   const area = document.getElementById('gameArea');
   const areaRect = area.getBoundingClientRect();
-  const rect = canvas.getBoundingClientRect();
-  const W = parseFloat(canvas.style.width);
-  const H = parseFloat(canvas.style.height);
-  const canvasBaseLeft = rect.left - viewState.x;
-  const canvasBaseTop = rect.top - viewState.y;
-  const localX = (item.x/canvas.width) * W;
-  const localY = (item.y/canvas.height) * H;
+  const localX = (item.x/canvas.width) * naturalRect.width;
+  const localY = (item.y/canvas.height) * naturalRect.height;
   const areaCenterX = areaRect.left + areaRect.width/2;
   const areaCenterY = areaRect.top + areaRect.height/2;
   return {
-    x: areaCenterX - canvasBaseLeft - targetScale*localX,
-    y: areaCenterY - canvasBaseTop - targetScale*localY,
+    x: areaCenterX - naturalRect.left - targetScale*localX,
+    y: areaCenterY - naturalRect.top - targetScale*localY,
     scale: targetScale
   };
 }
 
+function showHintRing(){
+  const area = document.getElementById('gameArea');
+  const areaRect = area.getBoundingClientRect();
+  const size = 90;
+  const ring = document.createElement('div');
+  ring.className = 'hintRing';
+  ring.style.left = (areaRect.left + areaRect.width/2 - size/2) + 'px';
+  ring.style.top = (areaRect.top + areaRect.height/2 - size/2) + 'px';
+  ring.style.width = size + 'px';
+  ring.style.height = size + 'px';
+  document.body.appendChild(ring);
+  return ring;
+}
+
 function useHintOnItem(item){
   const prevView = {x:viewState.x, y:viewState.y, scale:viewState.scale};
-  const target = screenCenterForItem(item, 3);
+  // CONFIRMED FIX: zoom in further (was 3x, now max 4x) and circle the item
+  // with a pulsing ring for a beat before picking it up, so the player
+  // actually has time to see exactly where it was.
+  const target = screenCenterForItem(item, 4);
 
   canvas.style.transition = 'transform 0.4s ease';
   viewState.x = target.x; viewState.y = target.y; viewState.scale = target.scale;
@@ -543,15 +555,19 @@ function useHintOnItem(item){
 
   setTimeout(() => {
     canvas.style.transition = '';
-    startFoundAnimation(item);
+    const ring = showHintRing();
     setTimeout(() => {
-      canvas.style.transition = 'transform 0.4s ease';
-      viewState.x = prevView.x; viewState.y = prevView.y; viewState.scale = prevView.scale;
-      clampPan();
-      applyTransform();
-      setTimeout(() => { canvas.style.transition = ''; }, 420);
-    }, 700);
-  }, 1000);
+      ring.remove();
+      startFoundAnimation(item);
+      setTimeout(() => {
+        canvas.style.transition = 'transform 0.4s ease';
+        viewState.x = prevView.x; viewState.y = prevView.y; viewState.scale = prevView.scale;
+        clampPan();
+        applyTransform();
+        setTimeout(() => { canvas.style.transition = ''; }, 420);
+      }, 700);
+    }, 900);
+  }, 450);
 }
 
 hintBtn.addEventListener('click', () => {
