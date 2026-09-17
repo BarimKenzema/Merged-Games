@@ -3,20 +3,6 @@ import sys, os, re, zipfile, json, plistlib, msgpack, shutil, glob
 import numpy as np
 from PIL import Image, ImageDraw
 
-CREASE_DEBUG_DIR = os.environ.get('CREASE_DEBUG_DIR')
-
-def _debug_dump(stage_name, key, img):
-    """Optional diagnostic hook (only active when CREASE_DEBUG_DIR is set in
-    the environment). Saves the exact in-memory image at a specific pipeline
-    stage as a plain lossless PNG, so we can tell whether a visual artifact
-    already exists BEFORE final atlas assembly/encoding, or is introduced
-    later - without guessing."""
-    if not CREASE_DEBUG_DIR:
-        return
-    os.makedirs(CREASE_DEBUG_DIR, exist_ok=True)
-    safe_key = key.replace('/', '_')
-    img.save(os.path.join(CREASE_DEBUG_DIR, f"{safe_key}__{stage_name}.png"))
-
 def parse_plist_rect(s):
     nums = re.findall(r'-?\d+\.?\d*', s)
     return [float(n) for n in nums]
