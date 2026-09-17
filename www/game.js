@@ -618,7 +618,7 @@ function showWin(){
   if (gs.levelIndex >= g.highestUnlockedIndex) {
     g.highestUnlockedIndex = Math.min(gs.levelIndex+1, manifest.puzzles.length-1);
   }
-  if (gs.lives === gs.maxLives) g.hintCharges = Math.min(10, g.hintCharges+1);
+  if (gs.lives === gs.maxLives) g.hintCharges = Math.min(99, g.hintCharges+1);
   if (g.inProgress && g.inProgress[entry.puzzle_id]) delete g.inProgress[entry.puzzle_id];
   saveGlobal(g);
   updateHintBadge();
