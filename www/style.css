@@ -90,8 +90,8 @@ html, body { margin:0; padding:0; height:100%; font-family:'Segoe UI', Roboto, s
 .overlay button { font-size:18px; padding:12px 26px; border-radius:24px; border:none; background:linear-gradient(135deg,#43e97b,#38f9d7); color:#003; font-weight:700; }
 
 #debugFound {
-  position:fixed; bottom:0; left:0; z-index:999;
-  background:rgba(0,0,0,0.85); color:#0f0; font-family:monospace; font-size:10px;
-  padding:6px; max-width:100%; max-height:35vh; overflow-y:auto;
+  position:fixed; top:56px; right:0; z-index:999;
+  background:rgba(0,0,0,0.85); color:#0f0; font-family:monospace; font-size:9px;
+  padding:5px; max-width:55%; max-height:30vh; overflow-y:auto;
   white-space:pre-wrap; pointer-events:none;
 }
