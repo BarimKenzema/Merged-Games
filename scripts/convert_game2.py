@@ -181,10 +181,12 @@ def convert_one(bundle_path, out_root):
             "rotation": info['rotation'],
             "zOrder": info['layer']
         }
-        if info['item_type'] == 'hshadow':
-            # Links this shadow to its parent hidden item's index, so the
-            # frontend can hide it once that item is found (fixes "shadow
-            # left behind after finding item" bug).
+        # UNCONFIRMED FOLLOW-UP FIX: standalone 's<N>' shadow sprites (e.g.
+        # "s16") use the same numbering convention as their parent hidden
+        # item (h16) but were never being linked - only the 'hshadow' suffix
+        # variant was. This is the likely cause of "found item leaves a
+        # shadow/residue behind" on levels that use this naming style instead.
+        if info['item_type'] in ('hshadow', 's') and info['item_number'] > 0:
             decor_entry['linked_item_index'] = info['item_number'] - 1
         decor.append(decor_entry)
 
