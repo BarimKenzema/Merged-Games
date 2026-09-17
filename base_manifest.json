@@ -1,0 +1,116 @@
+{
+  "puzzles": [
+    {
+      "puzzle_id": "game1_295872",
+      "source_game": "game1",
+      "item_count": 15,
+      "thumbnail": "game1_295872/thumb.jpg",
+      "background": "game1_295872/bg.jpg"
+    },
+    {
+      "puzzle_id": "game2_31297",
+      "source_game": "game2",
+      "item_count": 30,
+      "thumbnail": "game2_31297/thumb.jpg",
+      "background": "game2_31297/bg.jpg"
+    },
+    {
+      "puzzle_id": "game1_314888",
+      "source_game": "game1",
+      "item_count": 15,
+      "thumbnail": "game1_314888/thumb.jpg",
+      "background": "game1_314888/bg.jpg"
+    },
+    {
+      "puzzle_id": "game2_31316",
+      "source_game": "game2",
+      "item_count": 28,
+      "thumbnail": "game2_31316/thumb.jpg",
+      "background": "game2_31316/bg.jpg"
+    },
+    {
+      "puzzle_id": "game1_286951",
+      "source_game": "game1",
+      "item_count": 15,
+      "thumbnail": "game1_286951/thumb.jpg",
+      "background": "game1_286951/bg.jpg"
+    },
+    {
+      "puzzle_id": "game2_31115",
+      "source_game": "game2",
+      "item_count": 30,
+      "thumbnail": "game2_31115/thumb.jpg",
+      "background": "game2_31115/bg.jpg"
+    },
+    {
+      "puzzle_id": "game1_350232",
+      "source_game": "game1",
+      "item_count": 15,
+      "thumbnail": "game1_350232/thumb.jpg",
+      "background": "game1_350232/bg.jpg"
+    },
+    {
+      "puzzle_id": "game2_30175",
+      "source_game": "game2",
+      "item_count": 30,
+      "thumbnail": "game2_30175/thumb.jpg",
+      "background": "game2_30175/bg.jpg"
+    },
+    {
+      "puzzle_id": "game1_354220",
+      "source_game": "game1",
+      "item_count": 15,
+      "thumbnail": "game1_354220/thumb.jpg",
+      "background": "game1_354220/bg.jpg"
+    },
+    {
+      "puzzle_id": "game2_32052",
+      "source_game": "game2",
+      "item_count": 30,
+      "thumbnail": "game2_32052/thumb.jpg",
+      "background": "game2_32052/bg.jpg"
+    },
+    {
+      "puzzle_id": "game1_314835",
+      "source_game": "game1",
+      "item_count": 15,
+      "thumbnail": "game1_314835/thumb.jpg",
+      "background": "game1_314835/bg.jpg"
+    },
+    {
+      "puzzle_id": "game2_32826",
+      "source_game": "game2",
+      "item_count": 30,
+      "thumbnail": "game2_32826/thumb.jpg",
+      "background": "game2_32826/bg.jpg"
+    },
+    {
+      "puzzle_id": "game1_337741",
+      "source_game": "game1",
+      "item_count": 15,
+      "thumbnail": "game1_337741/thumb.jpg",
+      "background": "game1_337741/bg.jpg"
+    },
+    {
+      "puzzle_id": "game2_30232",
+      "source_game": "game2",
+      "item_count": 30,
+      "thumbnail": "game2_30232/thumb.jpg",
+      "background": "game2_30232/bg.jpg"
+    },
+    {
+      "puzzle_id": "game1_289981",
+      "source_game": "game1",
+      "item_count": 15,
+      "thumbnail": "game1_289981/thumb.jpg",
+      "background": "game1_289981/bg.jpg"
+    },
+    {
+      "puzzle_id": "game2_30002",
+      "source_game": "game2",
+      "item_count": 30,
+      "thumbnail": "game2_30002/thumb.jpg",
+      "background": "game2_30002/bg.jpg"
+    }
+  ]
+}
