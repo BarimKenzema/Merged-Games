@@ -124,11 +124,22 @@ def convert_one(zip_path, out_root):
     masked_images[bg_key] = source_img.crop((bx, by, bx + bw, by + bh))
 
     def build_masked(key):
+        # UNCONFIRMED FIX (testing): previously we re-masked every sprite
+        # using the plist's 'vertices' polygon field. Growing evidence
+        # suggests that field is a Cocos2d-x rendering-optimization mesh
+        # (draws a tight non-rectangular quad to cut overdraw), NOT a
+        # content-authoritative cutout shape - the source art already has
+        # its own correct, clean alpha channel. Applying a second, slightly
+        # imprecise polygon cut on top of already-correct alpha created two
+        # overlapping mismatched edges = visible "crease" ring around items.
+        # Now that repacking (see pack_images) already solves the ORIGINAL
+        # reason masking was added (overlapping rects bleeding neighbor
+        # content), we test skipping our own mask entirely and trust the
+        # image's native alpha as-is.
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
         x, y, w, h = [int(v) for v in rect]
         crop = source_img.crop((x, y, x + w, y + h))
-        crop = apply_polygon_mask(crop, info.get('vertices'))
         masked_images[key] = crop
 
     item_meta = []
