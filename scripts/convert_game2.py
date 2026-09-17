@@ -4,6 +4,21 @@ import UnityPy
 import texture2ddecoder
 from PIL import Image
 
+def load_ledger(path):
+    if not path:
+        return set()
+    try:
+        with open(path) as f:
+            return set(line.strip() for line in f if line.strip())
+    except FileNotFoundError:
+        return set()
+
+def append_ledger(path, level_id):
+    if not path:
+        return
+    with open(path, 'a') as f:
+        f.write(level_id + '\n')
+
 def parse_sprite_name(name):
     n = name
     if n.lower().endswith('.png'):
@@ -41,8 +56,6 @@ def parse_sprite_name(name):
 def make_square_thumbnail(source_img, rect, out_path, size=400, pad_color=(34,34,34)):
     x, y, w, h = rect
     cropped = source_img.crop((x, y, x + w, y + h)).convert("RGB")
-    # CONFIRMED FIX: crop-to-fill (cover) instead of pad-to-fit, so square
-    # thumbnails have zero padding/letterboxing regardless of source aspect.
     scale = max(size / w, size / h)
     new_w, new_h = max(1, int(w*scale)), max(1, int(h*scale))
     resized = cropped.resize((new_w, new_h), Image.LANCZOS)
@@ -60,11 +73,6 @@ def make_bg_preview(source_img, rect, out_path, max_dim=1000):
     resized.save(out_path, "JPEG", quality=85)
 
 def resolve_polygon(path_id, mono_by_pathid, depth=0):
-    """Returns (poly_tree, hops). hops=0 means the object referenced directly by
-    hiddenPoints[i] already contains polygonPoints (older-format levels, e.g. 30109).
-    hops>=1 means we had to follow an 'item' indirection to find it (newer-format
-    levels, e.g. 30680). CONFIRMED: the hop count determines which Y-sign convention
-    that item needs — the two level formats use OPPOSITE conventions for item Y."""
     if depth > 3:
         return None, None
     tree = mono_by_pathid.get(path_id)
@@ -76,8 +84,13 @@ def resolve_polygon(path_id, mono_by_pathid, depth=0):
         return resolve_polygon(tree['item']['m_PathID'], mono_by_pathid, depth+1)
     return None, None
 
-def convert_one(bundle_path, out_root):
+def convert_one(bundle_path, out_root, ledger=None, ledger_path=None):
     level_id = os.path.basename(bundle_path)
+
+    if ledger is not None and level_id in ledger:
+        print(f"SKIPPED (duplicate, already in ledger) {bundle_path}: level_id={level_id}")
+        return
+
     env = UnityPy.load(bundle_path)
 
     tex_objs = [o.read() for o in env.objects if o.type.name == "Texture2D"]
@@ -87,7 +100,6 @@ def convert_one(bundle_path, out_root):
     w, h = tex.m_Width, tex.m_Height
     raw = tex.image_data
     decoded = texture2ddecoder.decode_astc(raw, w, h, 10, 10)
-    # CONFIRMED FIX: must specify BGRA channel order, plain 'RGBA' gives wrong colors
     atlas = Image.frombytes('RGBA', (w, h), decoded, 'raw', 'BGRA')
     atlas = atlas.transpose(Image.FLIP_TOP_BOTTOM)
     atlas_h = atlas.height
@@ -96,8 +108,6 @@ def convert_one(bundle_path, out_root):
     for obj in env.objects:
         if obj.type.name == "Sprite":
             d = obj.read()
-            # CONFIRMED FIX: use m_RD.textureRect, NOT m_Rect (m_Rect can be stale/untrimmed
-            # and causes duplicate-ghost/scrambled crops on heavily-trimmed atlases)
             r = d.m_RD.textureRect
             x, y, sw, sh = int(round(r.x)), int(round(r.y)), int(round(r.width)), int(round(r.height))
             top = atlas_h - y - sh
@@ -148,9 +158,6 @@ def convert_one(bundle_path, out_root):
             for p in poly_data['polygonPoints']
         ]
         final_x = canvas_w / 2 + info['x']
-        # CONFIRMED FIX: older-format levels (hops==0) need item Y flipped;
-        # newer-format levels (hops>=1) need item Y NOT flipped (same convention
-        # as decor/shadow in that format).
         if hops == 0:
             final_y = canvas_h / 2 - info['y']
         else:
@@ -172,7 +179,6 @@ def convert_one(bundle_path, out_root):
         if not info or info['item_type'] not in ('decor', 's', 'hshadow'):
             continue
         final_x = canvas_w / 2 + info['x']
-        # CONFIRMED FIX: decor/shadow Y is NOT flipped
         final_y = canvas_h / 2 + info['y']
         decor_entry = {
             "sprite_rect": sprite_rects[name],
@@ -181,11 +187,6 @@ def convert_one(bundle_path, out_root):
             "rotation": info['rotation'],
             "zOrder": info['layer']
         }
-        # UNCONFIRMED FOLLOW-UP FIX: standalone 's<N>' shadow sprites (e.g.
-        # "s16") use the same numbering convention as their parent hidden
-        # item (h16) but were never being linked - only the 'hshadow' suffix
-        # variant was. This is the likely cause of "found item leaves a
-        # shadow/residue behind" on levels that use this naming style instead.
         if info['item_type'] in ('hshadow', 's') and info['item_number'] > 0:
             decor_entry['linked_item_index'] = info['item_number'] - 1
         decor.append(decor_entry)
@@ -193,7 +194,8 @@ def convert_one(bundle_path, out_root):
     puzzle_folder_name = f"game2_{level_id}"
     out_dir = os.path.join(out_root, puzzle_folder_name)
     os.makedirs(out_dir, exist_ok=True)
-    atlas.save(os.path.join(out_dir, "atlas.png"))
+    # Switched from lossless PNG to lossy WebP (quality=90) for size reduction.
+    atlas.save(os.path.join(out_dir, "atlas.webp"), quality=90, method=6)
 
     make_square_thumbnail(atlas, bg_rect, os.path.join(out_dir, "thumb.jpg"))
     make_bg_preview(atlas, bg_rect, os.path.join(out_dir, "bg.jpg"))
@@ -201,7 +203,7 @@ def convert_one(bundle_path, out_root):
     data = {
         "puzzle_id": puzzle_folder_name,
         "source_game": "game2",
-        "atlas": "atlas.png",
+        "atlas": "atlas.webp",
         "thumbnail": "thumb.jpg",
         "background": "bg.jpg",
         "canvas_width": canvas_w,
@@ -213,15 +215,21 @@ def convert_one(bundle_path, out_root):
     with open(os.path.join(out_dir, "data.json"), 'w') as f:
         json.dump(data, f)
 
+    if ledger is not None:
+        append_ledger(ledger_path, level_id)
+        ledger.add(level_id)
+
     print(f"Converted {bundle_path} -> {out_dir}  (items={len(items)}, decor={len(decor)})")
 
 if __name__ == "__main__":
     raw_dir = sys.argv[1]
     out_root = sys.argv[2]
+    ledger_path = sys.argv[3] if len(sys.argv) > 3 else None
+    ledger = load_ledger(ledger_path)
     os.makedirs(out_root, exist_ok=True)
     files = glob.glob(os.path.join(raw_dir, "*"))
     for fpath in files:
         try:
-            convert_one(fpath, out_root)
+            convert_one(fpath, out_root, ledger, ledger_path)
         except Exception as e:
             print(f"FAILED {fpath}: {e}")
