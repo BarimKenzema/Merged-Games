@@ -161,7 +161,13 @@ def convert_one(zip_path, out_root):
     puzzle_folder_name = f"game1_{puzzle_id}"
     out_dir = os.path.join(out_root, puzzle_folder_name)
     os.makedirs(out_dir, exist_ok=True)
-    masked_atlas.save(os.path.join(out_dir, "atlas.webp"))
+    # CONFIRMED FIX: default Pillow WebP save is LOSSY, which re-introduces
+    # faint neighbor-sprite bleeding across alpha edges in a packed atlas
+    # (block-based compression artifact) even though our polygon masking
+    # already produced a clean, correctly-masked image in memory. Saving
+    # lossless preserves the mask's clean edges exactly as verified in the
+    # diagnostic tool.
+    masked_atlas.save(os.path.join(out_dir, "atlas.webp"), lossless=True, quality=100, method=6)
 
     make_square_thumbnail(masked_atlas, bg_rect, os.path.join(out_dir, "thumb.jpg"))
     make_bg_preview(masked_atlas, bg_rect, os.path.join(out_dir, "bg.jpg"))
