@@ -18,22 +18,29 @@ def rect_to_polygon(rx, ry):
         {"x": -rx, "y": ry},
     ]
 
-def apply_polygon_mask(cropped_rgba, frame_info):
-    """CONFIRMED FIX: these atlases use TexturePacker's polygon packing mode
-    (frames carry 'vertices' data), which allows irregularly-shaped sprites'
-    bounding rectangles to overlap tightly-adjacent sprites. A plain rectangular
-    crop can therefore bleed in fragments of neighboring sprites. Masking the
-    crop down to just the real polygon silhouette (using the frame's own
-    'vertices' field, already in local crop-space) eliminates those leaked
-    fragments/duplicate-looking artifacts."""
+def apply_polygon_mask(cropped_rgba, frame_info, factor=4):
+    """CONFIRMED FIX (base): these atlases use TexturePacker's polygon packing
+    mode (frames carry 'vertices' data), which allows irregularly-shaped
+    sprites' bounding rectangles to overlap tightly-adjacent sprites. Masking
+    the crop down to just the real polygon silhouette eliminates leaked
+    neighbor fragments.
+
+    UNCONFIRMED FOLLOW-UP FIX (this pass): the original hard 0/255 mask was
+    reported to leave a visible sharp "crease" ring around items, since real
+    sprite art has soft antialiased edges that a binary mask cuts through
+    abruptly. This draws the mask at 4x resolution and downsamples with
+    LANCZOS to get a smooth antialiased alpha edge instead. Verify this
+    actually reduces the crease artifact on real puzzles before trusting it
+    fully - last diagnostic test was inconclusive."""
     vertices_str = frame_info.get('vertices')
     if not vertices_str:
         return cropped_rgba
     w, h = cropped_rgba.size
-    pts = parse_vertices(vertices_str)
-    mask = Image.new('L', (w, h), 0)
-    draw = ImageDraw.Draw(mask)
+    pts = [(x*factor, y*factor) for x, y in parse_vertices(vertices_str)]
+    big_mask = Image.new('L', (w*factor, h*factor), 0)
+    draw = ImageDraw.Draw(big_mask)
     draw.polygon(pts, fill=255)
+    mask = big_mask.resize((w, h), Image.LANCZOS)
     r, g, b, a = cropped_rgba.split()
     new_a = Image.composite(a, Image.new('L', (w, h), 0), mask)
     cropped_rgba.putalpha(new_a)
