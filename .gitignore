@@ -2,3 +2,5 @@ node_modules/
 android/
 www/puzzles/
 www/manifest.json
+bulk_out/
+packs_ready/
