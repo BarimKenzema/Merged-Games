@@ -1,7 +1,7 @@
 function loadGlobal(){
   const raw = localStorage.getItem('hog_global');
   if (raw) { try { return JSON.parse(raw); } catch(e) {} }
-  return { hintCharges: 10, highestUnlockedIndex: 0, lastPlayedIndex: 0, completedIds: [], inProgress: {} };
+  return { hintCharges: 99, highestUnlockedIndex: 0, lastPlayedIndex: 0, completedIds: [], inProgress: {} };
 }
 function saveGlobal(g){ localStorage.setItem('hog_global', JSON.stringify(g)); }
 
