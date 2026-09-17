@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys, os, re, zipfile, json, plistlib, msgpack, shutil, glob
+import numpy as np
 from PIL import Image, ImageDraw
 
 def parse_plist_rect(s):
@@ -17,6 +18,47 @@ def rect_to_polygon(rx, ry):
         {"x": rx, "y": ry},
         {"x": -rx, "y": ry},
     ]
+
+def _neighbor(arr, dy, dx):
+    pad_width = ((1,1),(1,1)) + ((0,0),) * (arr.ndim - 2)
+    padded = np.pad(arr, pad_width, mode='edge')
+    h, w = arr.shape[0], arr.shape[1]
+    return padded[1+dy:1+dy+h, 1+dx:1+dx+w, ...]
+
+def decontaminate_edges(img_rgba, alpha_threshold=250, iterations=8):
+    """CONFIRMED DIAGNOSIS: polygon mask shape is pixel-accurate (verified
+    visually against real art), so the visible 'crease' around items is NOT
+    a shape/alpha-cutoff problem. It's classic edge color contamination -
+    semi-transparent border pixels in the source art carry RGB blended with
+    whatever background the original asset was authored against, which
+    becomes a visible fringe/halo once composited onto OUR different
+    background. This fixes it by growing the nearest fully-opaque interior
+    color outward into the semi-transparent border, iteratively, WITHOUT
+    touching alpha at all - a standard "de-halo" / color decontamination
+    pass used for exactly this class of bug."""
+    arr = np.array(img_rgba).astype(np.float32)
+    rgb = arr[:,:,:3].copy()
+    alpha = arr[:,:,3]
+    filled = alpha >= alpha_threshold
+    for _ in range(iterations):
+        if filled.all():
+            break
+        unfilled = ~filled
+        sum_rgb = np.zeros_like(rgb)
+        count = np.zeros(alpha.shape, dtype=np.float32)
+        for dy, dx in [(-1,0),(1,0),(0,-1),(0,1)]:
+            n_filled = _neighbor(filled, dy, dx)
+            n_rgb = _neighbor(rgb, dy, dx)
+            sum_rgb[n_filled] += n_rgb[n_filled]
+            count[n_filled] += 1
+        newly = unfilled & (count > 0)
+        if not newly.any():
+            break
+        rgb[newly] = sum_rgb[newly] / count[newly][:, None]
+        filled = filled | newly
+    out = arr.copy()
+    out[:,:,:3] = rgb
+    return Image.fromarray(np.clip(out,0,255).astype(np.uint8), 'RGBA')
 
 def apply_polygon_mask(cropped_rgba, vertices_str, factor=4):
     if not vertices_str:
@@ -104,14 +146,15 @@ def convert_one(zip_path, out_root):
     masked_images[bg_key] = source_img.crop((bx, by, bx + bw, by + bh))
 
     def build_masked(key):
-        # RESTORED: masking IS necessary - confirmed by regression test.
-        # Polygon-packed atlases legitimately overlap sprites' rectangular
-        # bounds (only the polygons themselves are guaranteed non-overlapping),
-        # so cropping a raw rectangle can and does pick up real neighbor pixels.
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
         x, y, w, h = [int(v) for v in rect]
         crop = source_img.crop((x, y, x + w, y + h))
+        # Order matters: decontaminate edge colors FIRST (using the sprite's
+        # own native alpha to know what's "opaque" vs "edge"), THEN apply our
+        # polygon overlap-mask on top (which only ever removes alpha further,
+        # never adds it back, so decontamination's work is preserved).
+        crop = decontaminate_edges(crop)
         crop = apply_polygon_mask(crop, info.get('vertices'))
         masked_images[key] = crop
 
