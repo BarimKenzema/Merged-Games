@@ -240,7 +240,9 @@ canvas.addEventListener('touchmove', e => {
     viewState.x = mid.x - pinchStartRect.left + pinchStartViewX - newScale*localX;
     viewState.y = mid.y - pinchStartRect.top + pinchStartViewY - newScale*localY;
     viewState.scale = newScale;
+    const preClampX = viewState.x.toFixed(0), preClampY = viewState.y.toFixed(0);
     clampPan();
+    debugLog(`PINCH mid=(${mid.x.toFixed(0)},${mid.y.toFixed(0)}) scale=${newScale.toFixed(2)} preClamp=(${preClampX},${preClampY}) postClamp=(${viewState.x.toFixed(0)},${viewState.y.toFixed(0)})`);
     applyTransform();
   } else if (e.touches.length===1 && panStart){
     viewState.x = e.touches[0].clientX - panStart.x;
