@@ -82,6 +82,18 @@ html, body { margin:0; padding:0; height:100%; font-family:'Segoe UI', Roboto, s
 .flyingItem { position:fixed; pointer-events:none; z-index:80; background-size:contain; background-repeat:no-repeat; background-position:center; }
 
 .zoomPreview { position:fixed; z-index:90; pointer-events:none; background-size:contain; background-repeat:no-repeat; background-position:center; border:3px solid #fff; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,0.6); background-color:#222; }
+.hintRing {
+  position:fixed; z-index:85; pointer-events:none;
+  border-radius:50%;
+  border:4px solid #ffd700;
+  box-shadow:0 0 16px 4px rgba(255,215,0,0.8);
+  animation:hintRingPulse 0.9s ease-in-out infinite;
+}
+@keyframes hintRingPulse {
+  0% { transform:scale(0.85); opacity:0.9; }
+  50% { transform:scale(1.15); opacity:0.5; }
+  100% { transform:scale(0.85); opacity:0.9; }
+}
 
 .overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.85); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; z-index:100; }
 .overlay button { font-size:18px; padding:12px 26px; border-radius:24px; border:none; background:linear-gradient(135deg,#43e97b,#38f9d7); color:#003; font-weight:700; }
