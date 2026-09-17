@@ -68,7 +68,7 @@ def _dilate_mask(mask_bool, px=1):
         out = grown
     return out
 
-def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=1):
+def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=0):
     """CONFIRMED FIX: 'vertices' is a triangulated MESH vertex list (paired
     with 'triangles'), NOT an ordered perimeter outline. Drawing one polygon
     directly from raw vertex order only worked by coincidence for simple
