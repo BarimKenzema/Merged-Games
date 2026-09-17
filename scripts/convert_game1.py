@@ -19,8 +19,6 @@ def rect_to_polygon(rx, ry):
     ]
 
 def apply_polygon_mask(cropped_rgba, vertices_str, factor=4):
-    """Supersampled polygon masking - smooth antialiased edges instead of a
-    hard binary cutoff."""
     if not vertices_str:
         return cropped_rgba
     w, h = cropped_rgba.size
@@ -34,20 +32,8 @@ def apply_polygon_mask(cropped_rgba, vertices_str, factor=4):
     return cropped_rgba
 
 def pack_images(images_dict, padding=2):
-    """CONFIRMED FIX: TexturePacker's polygon packing mode lets sprites'
-    RECTANGULAR bounding boxes overlap each other (only their actual
-    irregular polygon shapes are guaranteed non-overlapping) - that's the
-    whole point of polygon packing, to save space. Our old converter reused
-    those original overlapping coordinates when rebuilding the atlas, so a
-    neighboring sprite's real opaque pixels could still land inside another
-    sprite's rectangle. Cropping that whole rectangle at render time then
-    picks up a genuine fragment of the neighbor - not a compression artifact,
-    an actual overlapping-content bug. Fix: repack every masked sprite into a
-    FRESH atlas at brand new, guaranteed non-overlapping positions, with a
-    small transparent gutter to also prevent bilinear-filtering seam bleed
-    when the canvas is scaled at runtime."""
     items = sorted(images_dict.items(), key=lambda kv: -kv[1].height)
-    max_w = max([img.width for _, img in items], default=0) if not items else max(4096, max(img.width for _, img in items) + padding*2)
+    max_w = max(4096, max((img.width for _, img in items), default=0) + padding*2)
     x_cursor, y_cursor, row_height = padding, padding, 0
     positions = {}
     for key, img in items:
@@ -101,9 +87,6 @@ def convert_one(zip_path, out_root):
     shapes = raw.get('shapes', [])
     layers = raw.get('layers', [])
 
-    # CONFIRMED FIX: search for whichever frame key actually ends in
-    # '_background' instead of guessing the numeric id from an arbitrary
-    # "first" frame key (some zips have inconsistent/multi id atlases).
     bg_key = next((k for k in frames if k.endswith('_background')), None)
     if bg_key is None:
         raise ValueError(f"No frame ending in '_background' found for {zip_path}")
@@ -116,30 +99,20 @@ def convert_one(zip_path, out_root):
 
     source_img = Image.open(webp_path).convert("RGBA")
 
-    # Step 1: crop + mask every needed frame from the ORIGINAL atlas into its
-    # own standalone image (still at original size, not yet repositioned).
     masked_images = {}
-
     bx, by, bw, bh = [int(v) for v in bg_rect]
     masked_images[bg_key] = source_img.crop((bx, by, bx + bw, by + bh))
 
     def build_masked(key):
-        # UNCONFIRMED FIX (testing): previously we re-masked every sprite
-        # using the plist's 'vertices' polygon field. Growing evidence
-        # suggests that field is a Cocos2d-x rendering-optimization mesh
-        # (draws a tight non-rectangular quad to cut overdraw), NOT a
-        # content-authoritative cutout shape - the source art already has
-        # its own correct, clean alpha channel. Applying a second, slightly
-        # imprecise polygon cut on top of already-correct alpha created two
-        # overlapping mismatched edges = visible "crease" ring around items.
-        # Now that repacking (see pack_images) already solves the ORIGINAL
-        # reason masking was added (overlapping rects bleeding neighbor
-        # content), we test skipping our own mask entirely and trust the
-        # image's native alpha as-is.
+        # RESTORED: masking IS necessary - confirmed by regression test.
+        # Polygon-packed atlases legitimately overlap sprites' rectangular
+        # bounds (only the polygons themselves are guaranteed non-overlapping),
+        # so cropping a raw rectangle can and does pick up real neighbor pixels.
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
         x, y, w, h = [int(v) for v in rect]
         crop = source_img.crop((x, y, x + w, y + h))
+        crop = apply_polygon_mask(crop, info.get('vertices'))
         masked_images[key] = crop
 
     item_meta = []
@@ -172,9 +145,6 @@ def convert_one(zip_path, out_root):
             "rotation": 0, "zOrder": layer.get('zOrder', 0)
         })
 
-    # Step 2: repack every masked image into a FRESH, guaranteed
-    # non-overlapping atlas. This is what actually fixes the leaked-fragment
-    # bug - the old code reused the ORIGINAL (overlapping) coordinates.
     positions, atlas_w, atlas_h = pack_images(masked_images)
     new_atlas = Image.new("RGBA", (atlas_w, atlas_h), (0, 0, 0, 0))
     new_rects = {}
@@ -207,8 +177,6 @@ def convert_one(zip_path, out_root):
     puzzle_folder_name = f"game1_{puzzle_id}"
     out_dir = os.path.join(out_root, puzzle_folder_name)
     os.makedirs(out_dir, exist_ok=True)
-    # Lossless keeps this fresh atlas's clean edges exact (cheap insurance,
-    # no longer the primary fix, but no reason to reintroduce lossy risk).
     new_atlas.save(os.path.join(out_dir, "atlas.webp"), lossless=True, quality=100, method=6)
 
     make_square_thumbnail(new_atlas, new_bg_rect, os.path.join(out_dir, "thumb.jpg"))
