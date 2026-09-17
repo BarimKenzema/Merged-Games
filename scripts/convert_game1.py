@@ -232,8 +232,11 @@ def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
         x, y, w, h = [int(v) for v in rect]
         page_img = page_images[frame_page[key]]
         crop = page_img.crop((x, y, x + w, y + h))
+        _debug_dump('1_raw_crop', f"{puzzle_id}_{key}", crop)
         crop = decontaminate_edges(crop)
+        _debug_dump('2_decontaminated', f"{puzzle_id}_{key}", crop)
         crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'))
+        _debug_dump('3_masked_final', f"{puzzle_id}_{key}", crop)
         masked_images[key] = crop
 
     item_meta = []
