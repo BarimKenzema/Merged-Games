@@ -41,11 +41,14 @@ def parse_sprite_name(name):
 def make_square_thumbnail(source_img, rect, out_path, size=400, pad_color=(34,34,34)):
     x, y, w, h = rect
     cropped = source_img.crop((x, y, x + w, y + h)).convert("RGB")
-    scale = min(size / w, size / h)
+    # CONFIRMED FIX: crop-to-fill (cover) instead of pad-to-fit, so square
+    # thumbnails have zero padding/letterboxing regardless of source aspect.
+    scale = max(size / w, size / h)
     new_w, new_h = max(1, int(w*scale)), max(1, int(h*scale))
     resized = cropped.resize((new_w, new_h), Image.LANCZOS)
-    canvas = Image.new("RGB", (size, size), pad_color)
-    canvas.paste(resized, ((size-new_w)//2, (size-new_h)//2))
+    left = (new_w - size) // 2
+    top = (new_h - size) // 2
+    canvas = resized.crop((left, top, left + size, top + size))
     canvas.save(out_path, "JPEG", quality=80)
 
 def make_bg_preview(source_img, rect, out_path, max_dim=1000):
