@@ -118,8 +118,9 @@ const gs = {
   maxLives: 5
 };
 let viewState = { scale:1, x:0, y:0 };
-let touchStartDist=null, touchStartScale=1, panStart=null, didMove=false;
-let pinchStartRect=null, pinchStartViewX=0, pinchStartViewY=0;
+let panStart=null, didMove=false;
+let lastPinchDist=null;
+let naturalRect = {left:0, top:0, width:0, height:0};
 let glowInterval = null;
 
 const canvas = document.getElementById('gameCanvas');
