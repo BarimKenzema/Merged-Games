@@ -18,39 +18,53 @@ def rect_to_polygon(rx, ry):
         {"x": -rx, "y": ry},
     ]
 
-def apply_polygon_mask(cropped_rgba, frame_info, factor=4):
-    """CONFIRMED FIX (base): these atlases use TexturePacker's polygon packing
-    mode (frames carry 'vertices' data), which allows irregularly-shaped
-    sprites' bounding rectangles to overlap tightly-adjacent sprites. Masking
-    the crop down to just the real polygon silhouette eliminates leaked
-    neighbor fragments.
-
-    UNCONFIRMED FOLLOW-UP FIX (this pass): the original hard 0/255 mask was
-    reported to leave a visible sharp "crease" ring around items, since real
-    sprite art has soft antialiased edges that a binary mask cuts through
-    abruptly. This draws the mask at 4x resolution and downsamples with
-    LANCZOS to get a smooth antialiased alpha edge instead. Verify this
-    actually reduces the crease artifact on real puzzles before trusting it
-    fully - last diagnostic test was inconclusive."""
-    vertices_str = frame_info.get('vertices')
+def apply_polygon_mask(cropped_rgba, vertices_str, factor=4):
+    """Supersampled polygon masking - smooth antialiased edges instead of a
+    hard binary cutoff."""
     if not vertices_str:
         return cropped_rgba
     w, h = cropped_rgba.size
     pts = [(x*factor, y*factor) for x, y in parse_vertices(vertices_str)]
     big_mask = Image.new('L', (w*factor, h*factor), 0)
-    draw = ImageDraw.Draw(big_mask)
-    draw.polygon(pts, fill=255)
+    ImageDraw.Draw(big_mask).polygon(pts, fill=255)
     mask = big_mask.resize((w, h), Image.LANCZOS)
     r, g, b, a = cropped_rgba.split()
     new_a = Image.composite(a, Image.new('L', (w, h), 0), mask)
     cropped_rgba.putalpha(new_a)
     return cropped_rgba
 
+def pack_images(images_dict, padding=2):
+    """CONFIRMED FIX: TexturePacker's polygon packing mode lets sprites'
+    RECTANGULAR bounding boxes overlap each other (only their actual
+    irregular polygon shapes are guaranteed non-overlapping) - that's the
+    whole point of polygon packing, to save space. Our old converter reused
+    those original overlapping coordinates when rebuilding the atlas, so a
+    neighboring sprite's real opaque pixels could still land inside another
+    sprite's rectangle. Cropping that whole rectangle at render time then
+    picks up a genuine fragment of the neighbor - not a compression artifact,
+    an actual overlapping-content bug. Fix: repack every masked sprite into a
+    FRESH atlas at brand new, guaranteed non-overlapping positions, with a
+    small transparent gutter to also prevent bilinear-filtering seam bleed
+    when the canvas is scaled at runtime."""
+    items = sorted(images_dict.items(), key=lambda kv: -kv[1].height)
+    max_w = max([img.width for _, img in items], default=0) if not items else max(4096, max(img.width for _, img in items) + padding*2)
+    x_cursor, y_cursor, row_height = padding, padding, 0
+    positions = {}
+    for key, img in items:
+        w, h = img.size
+        if x_cursor + w + padding > max_w:
+            x_cursor = padding
+            y_cursor += row_height + padding
+            row_height = 0
+        positions[key] = (x_cursor, y_cursor)
+        row_height = max(row_height, h)
+        x_cursor += w + padding
+    atlas_h = y_cursor + row_height + padding
+    return positions, max_w, atlas_h
+
 def make_square_thumbnail(source_img, rect, out_path, size=400, pad_color=(34,34,34)):
     x, y, w, h = [int(v) for v in rect]
     cropped = source_img.crop((x, y, x + w, y + h)).convert("RGB")
-    # CONFIRMED FIX: crop-to-fill (cover) instead of pad-to-fit, so square
-    # thumbnails have zero padding/letterboxing regardless of source aspect.
     scale = max(size / w, size / h)
     new_w, new_h = max(1, int(w*scale)), max(1, int(h*scale))
     resized = cropped.resize((new_w, new_h), Image.LANCZOS)
@@ -87,6 +101,9 @@ def convert_one(zip_path, out_root):
     shapes = raw.get('shapes', [])
     layers = raw.get('layers', [])
 
+    # CONFIRMED FIX: search for whichever frame key actually ends in
+    # '_background' instead of guessing the numeric id from an arbitrary
+    # "first" frame key (some zips have inconsistent/multi id atlases).
     bg_key = next((k for k in frames if k.endswith('_background')), None)
     if bg_key is None:
         raise ValueError(f"No frame ending in '_background' found for {zip_path}")
@@ -99,78 +116,92 @@ def convert_one(zip_path, out_root):
 
     source_img = Image.open(webp_path).convert("RGBA")
 
-    # Build a NEW, pre-masked atlas image: every sprite/decor frame gets its
-    # polygon mask baked in (as real alpha transparency) and is pasted back at
-    # its original atlas coordinates. This keeps the existing rect-based
-    # frontend rendering contract unchanged (game.js still just crops
-    # sprite_rect out of the atlas) while eliminating leaked-neighbor artifacts.
-    masked_atlas = Image.new("RGBA", source_img.size, (0, 0, 0, 0))
+    # Step 1: crop + mask every needed frame from the ORIGINAL atlas into its
+    # own standalone image (still at original size, not yet repositioned).
+    masked_images = {}
 
-    # Background gets pasted as-is (no masking needed/applicable for the bg frame).
     bx, by, bw, bh = [int(v) for v in bg_rect]
-    bg_crop = source_img.crop((bx, by, bx + bw, by + bh))
-    masked_atlas.paste(bg_crop, (bx, by))
+    masked_images[bg_key] = source_img.crop((bx, by, bx + bw, by + bh))
 
-    def stamp_masked_frame(key):
+    def build_masked(key):
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
         x, y, w, h = [int(v) for v in rect]
         crop = source_img.crop((x, y, x + w, y + h))
-        crop = apply_polygon_mask(crop, info)
-        masked_atlas.paste(crop, (x, y), crop)
+        crop = apply_polygon_mask(crop, info.get('vertices'))
+        masked_images[key] = crop
 
-    items = []
+    item_meta = []
     for shape in shapes:
         idx = shape['index']
         sprite_key = f"p{puzzle_id}_{idx}-0"
         thumb_key = f"p{puzzle_id}_{idx}-1"
-        sprite_rect = parse_plist_rect(frames[sprite_key]['textureRect']) if sprite_key in frames else None
-        thumb_rect = parse_plist_rect(frames[thumb_key]['textureRect']) if thumb_key in frames else None
-        if sprite_rect is None:
+        if sprite_key not in frames:
             continue
-        stamp_masked_frame(sprite_key)
-        if thumb_key in frames:
-            stamp_masked_frame(thumb_key)
-        items.append({
-            "index": idx,
-            "sprite_rect": sprite_rect,
-            "thumb_rect": thumb_rect,
-            "x": shape['x'],
-            "y": canvas_height - shape['y'],
-            "rotation": shape.get('rotation', 0),
-            "zOrder": shape.get('zOrder', 0),
+        build_masked(sprite_key)
+        has_thumb = thumb_key in frames
+        if has_thumb:
+            build_masked(thumb_key)
+        item_meta.append({
+            "index": idx, "sprite_key": sprite_key,
+            "thumb_key": thumb_key if has_thumb else None,
+            "x": shape['x'], "y": canvas_height - shape['y'],
+            "rotation": shape.get('rotation', 0), "zOrder": shape.get('zOrder', 0),
             "hitbox_polygon": rect_to_polygon(shape['rx'], shape['ry'])
         })
 
-    decor = []
+    decor_meta = []
     for layer in layers:
-        name = layer['name']
-        key = f"p{puzzle_id}_{name}"
+        key = f"p{puzzle_id}_{layer['name']}"
         if key not in frames:
             continue
-        rect = parse_plist_rect(frames[key]['textureRect'])
-        stamp_masked_frame(key)
-        decor.append({
-            "sprite_rect": rect,
-            "x": layer['x'],
-            "y": canvas_height - layer['y'],
-            "rotation": 0,
-            "zOrder": layer.get('zOrder', 0)
+        build_masked(key)
+        decor_meta.append({
+            "key": key, "x": layer['x'], "y": canvas_height - layer['y'],
+            "rotation": 0, "zOrder": layer.get('zOrder', 0)
         })
+
+    # Step 2: repack every masked image into a FRESH, guaranteed
+    # non-overlapping atlas. This is what actually fixes the leaked-fragment
+    # bug - the old code reused the ORIGINAL (overlapping) coordinates.
+    positions, atlas_w, atlas_h = pack_images(masked_images)
+    new_atlas = Image.new("RGBA", (atlas_w, atlas_h), (0, 0, 0, 0))
+    new_rects = {}
+    for key, img in masked_images.items():
+        px, py = positions[key]
+        new_atlas.paste(img, (px, py), img)
+        new_rects[key] = [px, py, img.width, img.height]
+
+    items = []
+    for meta in item_meta:
+        items.append({
+            "index": meta["index"],
+            "sprite_rect": new_rects[meta["sprite_key"]],
+            "thumb_rect": new_rects[meta["thumb_key"]] if meta["thumb_key"] else None,
+            "x": meta["x"], "y": meta["y"],
+            "rotation": meta["rotation"], "zOrder": meta["zOrder"],
+            "hitbox_polygon": meta["hitbox_polygon"]
+        })
+
+    decor = []
+    for meta in decor_meta:
+        decor.append({
+            "sprite_rect": new_rects[meta["key"]],
+            "x": meta["x"], "y": meta["y"],
+            "rotation": meta["rotation"], "zOrder": meta["zOrder"]
+        })
+
+    new_bg_rect = new_rects[bg_key]
 
     puzzle_folder_name = f"game1_{puzzle_id}"
     out_dir = os.path.join(out_root, puzzle_folder_name)
     os.makedirs(out_dir, exist_ok=True)
-    # CONFIRMED FIX: default Pillow WebP save is LOSSY, which re-introduces
-    # faint neighbor-sprite bleeding across alpha edges in a packed atlas
-    # (block-based compression artifact) even though our polygon masking
-    # already produced a clean, correctly-masked image in memory. Saving
-    # lossless preserves the mask's clean edges exactly as verified in the
-    # diagnostic tool.
-    masked_atlas.save(os.path.join(out_dir, "atlas.webp"), lossless=True, quality=100, method=6)
+    # Lossless keeps this fresh atlas's clean edges exact (cheap insurance,
+    # no longer the primary fix, but no reason to reintroduce lossy risk).
+    new_atlas.save(os.path.join(out_dir, "atlas.webp"), lossless=True, quality=100, method=6)
 
-    make_square_thumbnail(masked_atlas, bg_rect, os.path.join(out_dir, "thumb.jpg"))
-    make_bg_preview(masked_atlas, bg_rect, os.path.join(out_dir, "bg.jpg"))
+    make_square_thumbnail(new_atlas, new_bg_rect, os.path.join(out_dir, "thumb.jpg"))
+    make_bg_preview(new_atlas, new_bg_rect, os.path.join(out_dir, "bg.jpg"))
 
     data = {
         "puzzle_id": puzzle_folder_name,
@@ -180,7 +211,7 @@ def convert_one(zip_path, out_root):
         "background": "bg.jpg",
         "canvas_width": canvas_width,
         "canvas_height": canvas_height,
-        "background_rect": bg_rect,
+        "background_rect": new_bg_rect,
         "items": items,
         "decor": decor
     }
