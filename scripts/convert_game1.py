@@ -11,6 +11,10 @@ def parse_vertices(s):
     nums = [float(n) for n in s.split()]
     return list(zip(nums[0::2], nums[1::2]))
 
+def parse_triangles(s):
+    nums = [int(n) for n in s.split()]
+    return list(zip(nums[0::3], nums[1::3], nums[2::3]))
+
 def rect_to_polygon(rx, ry):
     return [
         {"x": -rx, "y": -ry},
@@ -64,13 +68,26 @@ def _dilate_mask(mask_bool, px=1):
         out = grown
     return out
 
-def apply_polygon_mask(cropped_rgba, vertices_str, factor=4, dilate_px=1):
-    if not vertices_str:
+def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=1):
+    """CONFIRMED FIX: 'vertices' is a triangulated MESH vertex list (paired
+    with 'triangles'), NOT an ordered perimeter outline. Drawing one polygon
+    directly from raw vertex order only worked by coincidence for simple
+    convex shapes - for anything concave/complex it draws lines spiking
+    outside the real silhouette, which was the root cause of creases, leaked
+    neighbor fragments, AND ruined/empty thumbnails all at once (confirmed
+    visually: filling actual triangles cleanly covers the real object, with
+    genuine neighbor-sprite fragments correctly falling OUTSIDE the filled
+    area, exactly as intended)."""
+    if not vertices_str or not triangles_str:
         return cropped_rgba
     w, h = cropped_rgba.size
-    pts = [(x*factor, y*factor) for x, y in parse_vertices(vertices_str)]
+    pts = parse_vertices(vertices_str)
+    tris = parse_triangles(triangles_str)
     big_mask = Image.new('L', (w*factor, h*factor), 0)
-    ImageDraw.Draw(big_mask).polygon(pts, fill=255)
+    draw = ImageDraw.Draw(big_mask)
+    for tri in tris:
+        tri_pts = [(pts[i][0]*factor, pts[i][1]*factor) for i in tri]
+        draw.polygon(tri_pts, fill=255)
     small_mask = big_mask.resize((w, h), Image.BOX)
     mask_bool = np.array(small_mask) > 10
     if dilate_px > 0:
@@ -115,29 +132,6 @@ def make_bg_preview(source_img, rect, out_path, max_dim=1000):
     resized = cropped.resize(new_size, Image.LANCZOS) if scale < 1.0 else cropped
     resized.save(out_path, "JPEG", quality=85)
 
-def get_oriented_crop(source_img, info, rect):
-    """NEW FIX (theory, being tested): frames flagged 'textureRotated' in the
-    plist are stored rotated 90 degrees WITHIN the atlas by TexturePacker,
-    but that frame's 'vertices' polygon data is defined in the sprite's
-    ORIGINAL, unrotated local space. We've never handled this field before.
-    Failing to un-rotate here means the polygon mask and the actual pixel
-    content are in two different orientations - with the OLD soft/blended
-    mask this just smeared into a fuzzy "crease", but the new hard-threshold
-    mask (needed to fix creases) now cuts EXACTLY where they truly overlap,
-    which can be partial or zero for a misoriented frame - worse on small
-    thumbnails where misalignment consumes a much bigger fraction of the
-    image. Un-rotating here should restore correct alignment.
-    NOTE: rotation DIRECTION is a best-guess based on the standard
-    TexturePacker convention (stored clockwise, so we rotate back
-    counter-clockwise here via PIL's rotate(90)). If content is now correct
-    but appears sideways/upside-down, flip this to rotate(-90).
-    """
-    x, y, w, h = [int(v) for v in rect]
-    crop = source_img.crop((x, y, x + w, y + h))
-    if info.get('textureRotated'):
-        crop = crop.rotate(90, expand=True)
-    return crop
-
 def convert_one(zip_path, out_root):
     base_name = os.path.splitext(os.path.basename(zip_path))[0]
     tmp_dir = f"/tmp/g1_{base_name}"
@@ -168,19 +162,18 @@ def convert_one(zip_path, out_root):
 
     source_img = Image.open(webp_path).convert("RGBA")
 
-    rotated_count = sum(1 for k, v in frames.items() if v.get('textureRotated'))
-    print(f"  [{puzzle_id}] frames with textureRotated=True: {rotated_count} / {len(frames)}")
-
     masked_images = {}
-    masked_images[bg_key] = get_oriented_crop(source_img, frames[bg_key], bg_rect)
+    bx, by, bw, bh = [int(v) for v in bg_rect]
+    masked_images[bg_key] = source_img.crop((bx, by, bx + bw, by + bh))
     canvas_width, canvas_height = masked_images[bg_key].size
 
     def build_masked(key):
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
-        crop = get_oriented_crop(source_img, info, rect)
+        x, y, w, h = [int(v) for v in rect]
+        crop = source_img.crop((x, y, x + w, y + h))
         crop = decontaminate_edges(crop)
-        crop = apply_polygon_mask(crop, info.get('vertices'))
+        crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'))
         masked_images[key] = crop
 
     item_meta = []
