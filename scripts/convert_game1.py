@@ -60,18 +60,50 @@ def decontaminate_edges(img_rgba, alpha_threshold=250, iterations=8):
     out[:,:,:3] = rgb
     return Image.fromarray(np.clip(out,0,255).astype(np.uint8), 'RGBA')
 
-def apply_polygon_mask(cropped_rgba, vertices_str, factor=4):
+def _shift(arr, dy, dx):
+    padded = np.pad(arr, ((1,1),(1,1)), mode='constant', constant_values=False)
+    h, w = arr.shape
+    return padded[1+dy:1+dy+h, 1+dx:1+dx+w]
+
+def _dilate_mask(mask_bool, px=1):
+    out = mask_bool.copy()
+    for _ in range(px):
+        grown = out.copy()
+        for dy, dx in [(-1,0),(1,0),(0,-1),(0,1)]:
+            grown |= _shift(out, dy, dx)
+        out = grown
+    return out
+
+def apply_polygon_mask(cropped_rgba, vertices_str, factor=4, dilate_px=1):
+    """CONFIRMED DIAGNOSIS (this pass): mask SHAPE is pixel-accurate (verified
+    against real art via overlay test) and edge COLOR contamination is
+    already fixed (decontaminate_edges). The remaining visible 'crease' is
+    caused by HOW the mask was being applied: Image.composite() with a
+    gradual/antialiased supersampled mask BLENDS our mask's own taper
+    together with the source art's OWN separate, already-soft alpha edge -
+    two independent gradual tapers multiplied together produce an
+    unnaturally wide combined semi-transparent band, wider than either the
+    artist's real edge or our polygon shape implies. That extra-wide,
+    doubly-soft band is what lets background bleed through as a visible
+    ring, worse the more you zoom in.
+    Fix: threshold the (still supersampled, still smooth-shaped) mask into a
+    clean BINARY in/out cut with a tiny 1px dilation safety margin, so the
+    art's own native alpha/antialiasing is preserved completely untouched
+    inside the shape, and only genuinely-outside neighbor content gets
+    zeroed - no more double-tapering."""
     if not vertices_str:
         return cropped_rgba
     w, h = cropped_rgba.size
     pts = [(x*factor, y*factor) for x, y in parse_vertices(vertices_str)]
     big_mask = Image.new('L', (w*factor, h*factor), 0)
     ImageDraw.Draw(big_mask).polygon(pts, fill=255)
-    mask = big_mask.resize((w, h), Image.LANCZOS)
-    r, g, b, a = cropped_rgba.split()
-    new_a = Image.composite(a, Image.new('L', (w, h), 0), mask)
-    cropped_rgba.putalpha(new_a)
-    return cropped_rgba
+    small_mask = big_mask.resize((w, h), Image.BOX)
+    mask_bool = np.array(small_mask) > 10  # tolerant: any real polygon coverage counts as "inside"
+    if dilate_px > 0:
+        mask_bool = _dilate_mask(mask_bool, dilate_px)
+    arr = np.array(cropped_rgba)
+    arr[..., 3] = np.where(mask_bool, arr[..., 3], 0)
+    return Image.fromarray(arr, 'RGBA')
 
 def pack_images(images_dict, padding=2):
     items = sorted(images_dict.items(), key=lambda kv: -kv[1].height)
