@@ -496,6 +496,47 @@ function startGlow(){
 }
 function stopGlow(){ if (glowInterval){ clearInterval(glowInterval); glowInterval=null; } hintBtn.classList.remove('glow'); }
 
+function screenCenterForItem(item, targetScale){
+  const area = document.getElementById('gameArea');
+  const areaRect = area.getBoundingClientRect();
+  const rect = canvas.getBoundingClientRect();
+  const W = parseFloat(canvas.style.width);
+  const H = parseFloat(canvas.style.height);
+  const canvasBaseLeft = rect.left - viewState.x;
+  const canvasBaseTop = rect.top - viewState.y;
+  const localX = (item.x/canvas.width) * W;
+  const localY = (item.y/canvas.height) * H;
+  const areaCenterX = areaRect.left + areaRect.width/2;
+  const areaCenterY = areaRect.top + areaRect.height/2;
+  return {
+    x: areaCenterX - canvasBaseLeft - targetScale*localX,
+    y: areaCenterY - canvasBaseTop - targetScale*localY,
+    scale: targetScale
+  };
+}
+
+function useHintOnItem(item){
+  const prevView = {x:viewState.x, y:viewState.y, scale:viewState.scale};
+  const target = screenCenterForItem(item, 3);
+
+  canvas.style.transition = 'transform 0.4s ease';
+  viewState.x = target.x; viewState.y = target.y; viewState.scale = target.scale;
+  clampPan();
+  applyTransform();
+
+  setTimeout(() => {
+    canvas.style.transition = '';
+    startFoundAnimation(item);
+    setTimeout(() => {
+      canvas.style.transition = 'transform 0.4s ease';
+      viewState.x = prevView.x; viewState.y = prevView.y; viewState.scale = prevView.scale;
+      clampPan();
+      applyTransform();
+      setTimeout(() => { canvas.style.transition = ''; }, 420);
+    }, 700);
+  }, 1000);
+}
+
 hintBtn.addEventListener('click', () => {
   const g = loadGlobal();
   if (g.hintCharges <= 0) return;
@@ -505,7 +546,7 @@ hintBtn.addEventListener('click', () => {
   g.hintCharges--;
   saveGlobal(g);
   updateHintBadge();
-  startFoundAnimation(pick);
+  useHintOnItem(pick);
 });
 
 // ---------------- BACK BUTTON / EXIT HANDLING ----------------
