@@ -220,6 +220,7 @@ function clampPan(){
 }
 
 canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
   didMove=false;
   if (e.touches.length===2){
     touchStartDist=getTouchDist(e.touches);
@@ -229,8 +230,9 @@ canvas.addEventListener('touchstart', e => {
     pinchStartViewY = viewState.y;
   }
   else if (e.touches.length===1 && viewState.scale > 1.01){ panStart={x:e.touches[0].clientX-viewState.x, y:e.touches[0].clientY-viewState.y}; }
-}, {passive:true});
+}, {passive:false});
 canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
   didMove=true;
   if (e.touches.length===2 && touchStartDist){
     const newScale = Math.max(1, Math.min(4, touchStartScale*(getTouchDist(e.touches)/touchStartDist)));
