@@ -87,13 +87,12 @@ def convert_one(zip_path, out_root):
     shapes = raw.get('shapes', [])
     layers = raw.get('layers', [])
 
-    sample_key = next(iter(frames.keys()))
-    m = re.match(r'p(\d+)_', sample_key)
-    if not m:
-        raise ValueError(f"Could not find puzzle id in plist frames for {zip_path}")
-    puzzle_id = m.group(1)
+    bg_key = next((k for k in frames if k.endswith('_background')), None)
+    if bg_key is None:
+        raise ValueError(f"No frame ending in '_background' found for {zip_path}")
+    m = re.match(r'p(\d+)_background$', bg_key)
+    puzzle_id = m.group(1) if m else bg_key.rsplit('_background', 1)[0].lstrip('p')
 
-    bg_key = f"p{puzzle_id}_background"
     bg_rect = parse_plist_rect(frames[bg_key]['textureRect'])
     canvas_width = bg_rect[2]
     canvas_height = bg_rect[3]
