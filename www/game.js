@@ -174,13 +174,27 @@ async function openGame(index){
 
 function fitCanvas(){
   const area = document.getElementById('gameArea');
-  // CONTAIN-FIT: whole puzzle visible at 1x zoom (matches original game
-  // behavior - fully zoomed out shows entire puzzle with no swiping needed).
-  // Any letterboxed space is filled by the blurred #gameAreaBg layer behind
-  // the canvas, same trick already used successfully on the menu screen.
   const scale = Math.min(area.clientWidth/canvas.width, area.clientHeight/canvas.height);
   canvas.style.width = (canvas.width*scale)+'px';
   canvas.style.height = (canvas.height*scale)+'px';
+  updateNaturalRect();
+}
+
+function updateNaturalRect(){
+  // Records the canvas's natural (untransformed) layout position - where it
+  // sits with zero pinch/pan transform applied. Used as a stable reference
+  // for pinch anchoring instead of reading getBoundingClientRect() mid-gesture
+  // (which is entangled with whatever transform is currently applied).
+  const area = document.getElementById('gameArea');
+  const areaRect = area.getBoundingClientRect();
+  const W = parseFloat(canvas.style.width);
+  const H = parseFloat(canvas.style.height);
+  naturalRect = {
+    left: areaRect.left + (areaRect.width - W) / 2,
+    top: areaRect.top + (areaRect.height - H) / 2,
+    width: W,
+    height: H
+  };
 }
 window.addEventListener('resize', () => { if (isScreenVisible('screenGame')) { fitCanvas(); resetView(); } });
 
