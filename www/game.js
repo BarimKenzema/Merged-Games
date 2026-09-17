@@ -252,9 +252,8 @@ canvas.addEventListener('touchmove', e => {
     clampPan();
     applyTransform();
   }
-}, {passive:true});
+}, {passive:false});
 canvas.addEventListener('touchend', e => { if (e.touches.length===0){ touchStartDist=null; panStart=null; pinchStartRect=null; } });
-
 function buildHearts(){
   heartsDiv.innerHTML='';
   for (let i=0;i<gs.maxLives;i++){
