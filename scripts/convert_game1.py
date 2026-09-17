@@ -132,6 +132,46 @@ def make_bg_preview(source_img, rect, out_path, max_dim=1000):
     resized = cropped.resize(new_size, Image.LANCZOS) if scale < 1.0 else cropped
     resized.save(out_path, "JPEG", quality=85)
 
+def load_all_pages(tmp_dir):
+    """CONFIRMED FIX: some puzzles split their atlas across MULTIPLE numbered
+    pages (e.g. `0.webp`/`0.plist` PLUS `1.webp`/`1.plist`), because a plist
+    can only reference frames inside its own paired webp - if the background
+    didn't fit efficiently alongside item art, the original game split it
+    onto a second page. Confirmed via direct zip inspection of puzzle 355765:
+    all 75 item frames live in `0.webp`/`0.plist`, but the ENTIRE background
+    frame (`p355765_background`) lives alone in `1.webp`/`1.plist`. The old
+    code only ever looked at page 0, so puzzles like this always failed with
+    'No frame ending in _background found' even though the background frame
+    genuinely exists, just on a different page. This function discovers and
+    merges ALL numbered pages generically (not just page 1 specifically), in
+    case any puzzle also splits item frames across pages.
+
+    Returns:
+      frames: merged dict of frame_name -> frame_info (same shape as before)
+      frame_page: dict of frame_name -> which page number it came from
+      page_images: dict of page number -> opened PIL RGBA image for that page
+    """
+    frames = {}
+    frame_page = {}
+    page_images = {}
+    for plist_path in sorted(glob.glob(os.path.join(tmp_dir, "*.plist"))):
+        page_str = os.path.splitext(os.path.basename(plist_path))[0]
+        try:
+            page_num = int(page_str)
+        except ValueError:
+            continue
+        webp_path = os.path.join(tmp_dir, f"{page_num}.webp")
+        if not os.path.exists(webp_path):
+            continue
+        with open(plist_path, 'rb') as f:
+            plist_data = plistlib.load(f)
+        page_frames = plist_data.get('frames', {})
+        for k, v in page_frames.items():
+            frames[k] = v
+            frame_page[k] = page_num
+        page_images[page_num] = Image.open(webp_path).convert("RGBA")
+    return frames, frame_page, page_images
+
 def convert_one(zip_path, out_root):
     base_name = os.path.splitext(os.path.basename(zip_path))[0]
     tmp_dir = f"/tmp/g1_{base_name}"
@@ -139,13 +179,11 @@ def convert_one(zip_path, out_root):
     with zipfile.ZipFile(zip_path, 'r') as z:
         z.extractall(tmp_dir)
 
-    webp_path = os.path.join(tmp_dir, "0.webp")
-    plist_path = os.path.join(tmp_dir, "0.plist")
     bin_path = os.path.join(tmp_dir, "data.bin")
 
-    with open(plist_path, 'rb') as f:
-        plist_data = plistlib.load(f)
-    frames = plist_data['frames']
+    frames, frame_page, page_images = load_all_pages(tmp_dir)
+    if not frames:
+        raise ValueError(f"No plist/webp atlas pages found for {zip_path}")
 
     with open(bin_path, 'rb') as f:
         raw = msgpack.unpackb(f.read(), raw=False)
@@ -159,19 +197,19 @@ def convert_one(zip_path, out_root):
     puzzle_id = m.group(1) if m else bg_key.rsplit('_background', 1)[0].lstrip('p')
 
     bg_rect = parse_plist_rect(frames[bg_key]['textureRect'])
-
-    source_img = Image.open(webp_path).convert("RGBA")
+    bg_source_img = page_images[frame_page[bg_key]]
 
     masked_images = {}
     bx, by, bw, bh = [int(v) for v in bg_rect]
-    masked_images[bg_key] = source_img.crop((bx, by, bx + bw, by + bh))
+    masked_images[bg_key] = bg_source_img.crop((bx, by, bx + bw, by + bh))
     canvas_width, canvas_height = masked_images[bg_key].size
 
     def build_masked(key):
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
         x, y, w, h = [int(v) for v in rect]
-        crop = source_img.crop((x, y, x + w, y + h))
+        page_img = page_images[frame_page[key]]
+        crop = page_img.crop((x, y, x + w, y + h))
         crop = decontaminate_edges(crop)
         crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'))
         masked_images[key] = crop
