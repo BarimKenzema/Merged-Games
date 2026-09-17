@@ -16,7 +16,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python dependencies
-        run: pip install msgpack UnityPy texture2ddecoder Pillow
+        run: pip install msgpack UnityPy texture2ddecoder Pillow numpy
 
       - name: Pick random sample URLs
         run: |
