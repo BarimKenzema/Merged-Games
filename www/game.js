@@ -1,17 +1,24 @@
 function loadGlobal(){
   const raw = localStorage.getItem('hog_global');
   if (raw) { try { return JSON.parse(raw); } catch(e) {} }
-  return { hintCharges: 99, highestUnlockedIndex: 0, lastPlayedIndex: 0, completedIds: [] };
+  return { hintCharges: 10, highestUnlockedIndex: 0, lastPlayedIndex: 0, completedIds: [], inProgress: {} };
 }
 function saveGlobal(g){ localStorage.setItem('hog_global', JSON.stringify(g)); }
 
-const debugLines = [];
-function debugLog(msg){
-  const t = new Date().toISOString().substr(11,8);
-  debugLines.push(`[${t}] ${msg}`);
-  while (debugLines.length > 10) debugLines.shift();
-  const el = document.getElementById('debugFound');
-  if (el) el.textContent = debugLines.join('\n');
+function saveProgress(){
+  const entry = manifest.puzzles[gs.levelIndex];
+  if (!entry || !gs.puzzleData) return;
+  const g = loadGlobal();
+  if (!g.inProgress) g.inProgress = {};
+  g.inProgress[entry.puzzle_id] = { found: [...gs.found], lives: gs.lives };
+  saveGlobal(g);
+}
+function clearProgress(puzzleId){
+  const g = loadGlobal();
+  if (g.inProgress && g.inProgress[puzzleId]) {
+    delete g.inProgress[puzzleId];
+    saveGlobal(g);
+  }
 }
 
 let manifest = null;
@@ -143,9 +150,14 @@ async function openGame(index){
   const entry = manifest.puzzles[index];
   const res = await fetch(`puzzles/${entry.puzzle_id}/data.json`);
   gs.puzzleData = await res.json();
-  gs.found = new Set();
+
+  // CONFIRMED FIX: restore in-progress state (found items + remaining lives)
+  // if this puzzle was left mid-way via back button / app exit, instead of
+  // always resetting to a fresh start.
+  const saved = (g.inProgress && g.inProgress[entry.puzzle_id]) || null;
+  gs.found = new Set(saved ? saved.found : []);
   gs.pending = new Set();
-  gs.lives = gs.maxLives;
+  gs.lives = saved ? saved.lives : gs.maxLives;
 
   document.getElementById('gameAreaBg').style.backgroundImage = `url(puzzles/${entry.puzzle_id}/${gs.puzzleData.background})`;
 
@@ -156,8 +168,6 @@ async function openGame(index){
   });
   gs.atlasImg = img;
 
-  // IMPORTANT: make the game screen visible BEFORE measuring/sizing the canvas,
-  // otherwise gameArea has 0 width/height and the canvas collapses to nothing.
   showScreen('screenGame');
 
   canvas.width = gs.puzzleData.canvas_width;
@@ -166,10 +176,10 @@ async function openGame(index){
   resetView();
 
   buildHearts();
+  updateHearts();
   buildTray();
   updateHintBadge();
   startGlow();
-  debugLog(`OPENED puzzle=${entry.puzzle_id} totalItems=${gs.puzzleData.items.length}`);
   render();
 }
 
@@ -182,10 +192,6 @@ function fitCanvas(){
 }
 
 function updateNaturalRect(){
-  // Records the canvas's natural (untransformed) layout position - where it
-  // sits with zero pinch/pan transform applied. Used as a stable reference
-  // for pinch anchoring instead of reading getBoundingClientRect() mid-gesture
-  // (which is entangled with whatever transform is currently applied).
   const area = document.getElementById('gameArea');
   const areaRect = area.getBoundingClientRect();
   const W = parseFloat(canvas.style.width);
@@ -236,14 +242,6 @@ function clampPan(){
   }
 }
 
-// ---------------- TOUCH HANDLING (rewritten) ----------------
-// CRITICAL FIX: calling preventDefault() on touchstart/touchmove (needed to
-// stop the native WebView's own pinch/pan gestures from fighting our JS)
-// ALSO permanently suppresses the browser's synthetic 'click' event on
-// Android. That's why manual tap-to-find broke completely last round. Fix:
-// detect a genuine tap ourselves in touchend (no movement beyond a small
-// threshold) and call handleClick() directly from there instead of relying
-// on 'click' at all for touch input.
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   didMove = false;
@@ -267,15 +265,6 @@ canvas.addEventListener('touchmove', e => {
     const mid = getMidpoint(e.touches);
     const ratio = newDist / lastPinchDist;
     const newScale = Math.max(1, Math.min(4, viewState.scale * ratio));
-    // FIX: anchor using the PREVIOUS frame's midpoint (lastPinchMid), not the
-    // CURRENT one. Using the current midpoint here makes the formula
-    // mathematically collapse into a no-op whenever newScale ends up equal
-    // to the old scale (i.e. whenever zoom is clamped at the 1x/4x boundary)
-    // - meaning pure two-finger translation would freeze the view solid
-    // while your fingers keep moving, then "snap" once you lift a finger.
-    // Anchoring from the previous midpoint makes pure translation work
-    // correctly in that case too (it degenerates to simple panning), while
-    // still behaving identically to before whenever scale IS changing.
     const localX = (lastPinchMid.x - naturalRect.left - viewState.x) / viewState.scale;
     const localY = (lastPinchMid.y - naturalRect.top - viewState.y) / viewState.scale;
     viewState.x = mid.x - naturalRect.left - newScale * localX;
@@ -285,7 +274,6 @@ canvas.addEventListener('touchmove', e => {
     lastPinchMid = mid;
     clampPan();
     applyTransform();
-    debugLog(`PINCH mid=(${mid.x.toFixed(0)},${mid.y.toFixed(0)}) scale=${newScale.toFixed(2)} view=(${viewState.x.toFixed(0)},${viewState.y.toFixed(0)})`);
   } else if (e.touches.length === 1) {
     const dx = e.touches[0].clientX - touchStartX;
     const dy = e.touches[0].clientY - touchStartY;
@@ -318,8 +306,6 @@ canvas.addEventListener('touchend', e => {
   }
 }, {passive:false});
 
-// Kept for desktop/mouse testing convenience - inert on touch devices since
-// touch-action:none + preventDefault above already suppress synthetic clicks.
 canvas.addEventListener('click', e => {
   if (didMove){ didMove=false; return; }
   const rect = canvas.getBoundingClientRect();
@@ -349,9 +335,15 @@ function cropToDataUrl(rect){
 
 function buildTray(){
   trayDiv.innerHTML='';
-  gs.puzzleData.items.forEach(item => {
+  // Items already found (restored from saved progress) are built directly
+  // into the "found" visual state and placed at the end, so resuming a
+  // puzzle looks the same as if you'd found them in-session.
+  const notFound = gs.puzzleData.items.filter(it => !gs.found.has(it.index));
+  const found = gs.puzzleData.items.filter(it => gs.found.has(it.index));
+  [...notFound, ...found].forEach(item => {
     const div=document.createElement('div');
-    div.className='trayItem'; div.id='tray_'+item.index;
+    div.className='trayItem' + (gs.found.has(item.index) ? ' found' : '');
+    div.id='tray_'+item.index;
     const rect = item.thumb_rect || item.sprite_rect;
     div.style.backgroundImage = `url(${cropToDataUrl(rect)})`;
     div.addEventListener('click', () => showZoomPreview(item, div));
@@ -431,10 +423,8 @@ function handleClick(clickX, clickY){
   }
   if (candidates.length){
     candidates.sort((a,b) => b.zOrder-a.zOrder);
-    debugLog(`CLICK (${clickX.toFixed(0)},${clickY.toFixed(0)}) -> HIT index=${candidates[0].index} (${candidates.length} candidates)`);
     startFoundAnimation(candidates[0]);
   } else {
-    debugLog(`CLICK (${clickX.toFixed(0)},${clickY.toFixed(0)}) -> MISS`);
     registerMiss();
   }
 }
@@ -442,7 +432,6 @@ function handleClick(clickX, clickY){
 function startFoundAnimation(item){
   gs.pending.add(item.index);
   render();
-  debugLog(`PENDING added index=${item.index}`);
 
   const canvasRect = canvas.getBoundingClientRect();
   const scaleX = canvasRect.width/canvas.width, scaleY = canvasRect.height/canvas.height;
@@ -496,19 +485,20 @@ function moveTrayItemToEnd(trayEl){
 function finalizeFound(index){
   gs.pending.delete(index);
   gs.found.add(index);
-  debugLog(`FOUND finalized index=${index}. found set=[${[...gs.found].join(',')}]`);
   const trayEl = document.getElementById('tray_'+index);
   if (trayEl) {
     trayEl.classList.add('found');
     moveTrayItemToEnd(trayEl);
   }
   render();
+  saveProgress();
   if (gs.found.size === gs.puzzleData.items.length) setTimeout(showWin, 250);
 }
 
 function registerMiss(){
   gs.lives--;
   updateHearts();
+  saveProgress();
   if (gs.lives<=0) setTimeout(showLose, 200);
 }
 
@@ -519,7 +509,8 @@ function showWin(){
   if (gs.levelIndex >= g.highestUnlockedIndex) {
     g.highestUnlockedIndex = Math.min(gs.levelIndex+1, manifest.puzzles.length-1);
   }
-  if (gs.lives === gs.maxLives) g.hintCharges = Math.min(99, g.hintCharges+1);
+  if (gs.lives === gs.maxLives) g.hintCharges = Math.min(10, g.hintCharges+1);
+  if (g.inProgress && g.inProgress[entry.puzzle_id]) delete g.inProgress[entry.puzzle_id];
   saveGlobal(g);
   updateHintBadge();
   stopGlow();
@@ -532,7 +523,11 @@ document.getElementById('nextBtn').addEventListener('click', () => {
   const next = Math.min(gs.levelIndex+1, manifest.puzzles.length-1);
   openGame(next);
 });
-document.getElementById('retryBtn').addEventListener('click', () => { openGame(gs.levelIndex); });
+document.getElementById('retryBtn').addEventListener('click', () => {
+  const entry = manifest.puzzles[gs.levelIndex];
+  clearProgress(entry.puzzle_id);
+  openGame(gs.levelIndex);
+});
 
 function updateHintBadge(){
   const g = loadGlobal();
@@ -565,10 +560,6 @@ function screenCenterForItem(item, targetScale){
 }
 
 function showHintRing(item){
-  // Computes the item's ACTUAL on-screen position from the current (already
-  // clamped) viewState, rather than assuming it's dead-center - fixes the
-  // ring appearing in the wrong place when the item is near an edge and
-  // clampPan() had to shift the view so it isn't perfectly centered.
   const screenX = naturalRect.left + viewState.x + (item.x/canvas.width) * naturalRect.width * viewState.scale;
   const screenY = naturalRect.top + viewState.y + (item.y/canvas.height) * naturalRect.height * viewState.scale;
   const size = 90;
@@ -620,7 +611,6 @@ hintBtn.addEventListener('click', () => {
   useHintOnItem(pick);
 });
 
-// ---------------- BACK BUTTON / EXIT HANDLING ----------------
 function handleBackNavigation(){
   if (isScreenVisible('screenGame')) {
     stopGlow();
