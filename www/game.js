@@ -119,7 +119,8 @@ const gs = {
 };
 let viewState = { scale:1, x:0, y:0 };
 let panStart=null, didMove=false;
-let lastPinchDist=null;
+let touchStartX=0, touchStartY=0;
+let lastPinchDist=null, lastPinchMid=null;
 let naturalRect = {left:0, top:0, width:0, height:0};
 let glowInterval = null;
 
@@ -206,13 +207,6 @@ function applyTransform(){
 function getTouchDist(t){ const dx=t[0].clientX-t[1].clientX, dy=t[0].clientY-t[1].clientY; return Math.sqrt(dx*dx+dy*dy); }
 function getMidpoint(t){ return { x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2 }; }
 
-// CONFIRMED FIX: previous version had a branch that HARD-OVERRODE the pinch
-// anchor position whenever content was smaller than the viewport on an axis
-// (common now with contain-fit's letterboxing), forcing it to a fixed point
-// regardless of finger position - that was the "always zooms to one side" bug.
-// This version computes a proper [lo,hi] range regardless of which bound is
-// numerically smaller, and simply clamps into that range without forcing an
-// exact override, letting the anchor math keep control.
 function clampAxis(value, areaSize, flexOffset, scaledSize){
   const optionA = areaSize - flexOffset - scaledSize;
   const optionB = -flexOffset;
@@ -230,10 +224,6 @@ function clampPan(){
   const flexOffsetX = (areaW - W) / 2;
   const flexOffsetY = (areaH - H) / 2;
   const scaledW = W * s, scaledH = H * s;
-  // When content already fits within the viewport on an axis (always true for
-  // BOTH axes at scale==1 since we use contain-fit), force exact centering on
-  // that axis instead of allowing any pan - this guarantees full zoom-out
-  // always returns to a perfectly centered view.
   if (scaledW <= areaW + 0.5) {
     viewState.x = (areaW - scaledW) / 2 - flexOffsetX;
   } else {
@@ -246,43 +236,97 @@ function clampPan(){
   }
 }
 
+// ---------------- TOUCH HANDLING (rewritten) ----------------
+// CRITICAL FIX: calling preventDefault() on touchstart/touchmove (needed to
+// stop the native WebView's own pinch/pan gestures from fighting our JS)
+// ALSO permanently suppresses the browser's synthetic 'click' event on
+// Android. That's why manual tap-to-find broke completely last round. Fix:
+// detect a genuine tap ourselves in touchend (no movement beyond a small
+// threshold) and call handleClick() directly from there instead of relying
+// on 'click' at all for touch input.
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  didMove=false;
-  if (e.touches.length===2){
+  didMove = false;
+  if (e.touches.length === 2) {
     lastPinchDist = getTouchDist(e.touches);
+    lastPinchMid = getMidpoint(e.touches);
+  } else if (e.touches.length === 1) {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    panStart = (viewState.scale > 1.01)
+      ? { x: e.touches[0].clientX - viewState.x, y: e.touches[0].clientY - viewState.y }
+      : null;
   }
-  else if (e.touches.length===1 && viewState.scale > 1.01){ panStart={x:e.touches[0].clientX-viewState.x, y:e.touches[0].clientY-viewState.y}; }
 }, {passive:false});
+
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  didMove=true;
-  if (e.touches.length===2 && lastPinchDist){
-    // CONFIRMED REWRITE: anchor recomputed fresh EVERY frame from the CURRENT
-    // viewState (not a snapshot frozen at gesture start). Standard drift-free
-    // approach: each frame independently solves "whatever local point is
-    // currently under the fingers, keep it under the fingers."
+  if (e.touches.length === 2 && lastPinchDist) {
+    didMove = true;
     const newDist = getTouchDist(e.touches);
     const mid = getMidpoint(e.touches);
     const ratio = newDist / lastPinchDist;
     const newScale = Math.max(1, Math.min(4, viewState.scale * ratio));
-    const localX = (mid.x - naturalRect.left - viewState.x) / viewState.scale;
-    const localY = (mid.y - naturalRect.top - viewState.y) / viewState.scale;
+    // FIX: anchor using the PREVIOUS frame's midpoint (lastPinchMid), not the
+    // CURRENT one. Using the current midpoint here makes the formula
+    // mathematically collapse into a no-op whenever newScale ends up equal
+    // to the old scale (i.e. whenever zoom is clamped at the 1x/4x boundary)
+    // - meaning pure two-finger translation would freeze the view solid
+    // while your fingers keep moving, then "snap" once you lift a finger.
+    // Anchoring from the previous midpoint makes pure translation work
+    // correctly in that case too (it degenerates to simple panning), while
+    // still behaving identically to before whenever scale IS changing.
+    const localX = (lastPinchMid.x - naturalRect.left - viewState.x) / viewState.scale;
+    const localY = (lastPinchMid.y - naturalRect.top - viewState.y) / viewState.scale;
     viewState.x = mid.x - naturalRect.left - newScale * localX;
     viewState.y = mid.y - naturalRect.top - newScale * localY;
     viewState.scale = newScale;
     lastPinchDist = newDist;
+    lastPinchMid = mid;
     clampPan();
     applyTransform();
     debugLog(`PINCH mid=(${mid.x.toFixed(0)},${mid.y.toFixed(0)}) scale=${newScale.toFixed(2)} view=(${viewState.x.toFixed(0)},${viewState.y.toFixed(0)})`);
-  } else if (e.touches.length===1 && panStart){
-    viewState.x = e.touches[0].clientX - panStart.x;
-    viewState.y = e.touches[0].clientY - panStart.y;
-    clampPan();
-    applyTransform();
+  } else if (e.touches.length === 1) {
+    const dx = e.touches[0].clientX - touchStartX;
+    const dy = e.touches[0].clientY - touchStartY;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) didMove = true;
+    if (panStart) {
+      viewState.x = e.touches[0].clientX - panStart.x;
+      viewState.y = e.touches[0].clientY - panStart.y;
+      clampPan();
+      applyTransform();
+    }
   }
 }, {passive:false});
-canvas.addEventListener('touchend', e => { if (e.touches.length===0){ lastPinchDist=null; panStart=null; } });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (!didMove && e.changedTouches.length === 1) {
+    const t = e.changedTouches[0];
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width/rect.width, scaleY = canvas.height/rect.height;
+    handleClick((t.clientX-rect.left)*scaleX, (t.clientY-rect.top)*scaleY);
+  }
+  if (e.touches.length === 0) {
+    lastPinchDist = null; lastPinchMid = null; panStart = null;
+  } else if (e.touches.length === 1) {
+    lastPinchDist = null; lastPinchMid = null;
+    touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY;
+    panStart = (viewState.scale > 1.01)
+      ? { x: e.touches[0].clientX - viewState.x, y: e.touches[0].clientY - viewState.y }
+      : null;
+  }
+}, {passive:false});
+
+// Kept for desktop/mouse testing convenience - inert on touch devices since
+// touch-action:none + preventDefault above already suppress synthetic clicks.
+canvas.addEventListener('click', e => {
+  if (didMove){ didMove=false; return; }
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width/rect.width, scaleY = canvas.height/rect.height;
+  handleClick((e.clientX-rect.left)*scaleX, (e.clientY-rect.top)*scaleY);
+});
+
 function buildHearts(){
   heartsDiv.innerHTML='';
   for (let i=0;i<gs.maxLives;i++){
@@ -490,13 +534,6 @@ document.getElementById('nextBtn').addEventListener('click', () => {
 });
 document.getElementById('retryBtn').addEventListener('click', () => { openGame(gs.levelIndex); });
 
-canvas.addEventListener('click', e => {
-  if (didMove){ didMove=false; return; }
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width/rect.width, scaleY = canvas.height/rect.height;
-  handleClick((e.clientX-rect.left)*scaleX, (e.clientY-rect.top)*scaleY);
-});
-
 function updateHintBadge(){
   const g = loadGlobal();
   hintCountEl.textContent = g.hintCharges;
@@ -527,14 +564,18 @@ function screenCenterForItem(item, targetScale){
   };
 }
 
-function showHintRing(){
-  const area = document.getElementById('gameArea');
-  const areaRect = area.getBoundingClientRect();
+function showHintRing(item){
+  // Computes the item's ACTUAL on-screen position from the current (already
+  // clamped) viewState, rather than assuming it's dead-center - fixes the
+  // ring appearing in the wrong place when the item is near an edge and
+  // clampPan() had to shift the view so it isn't perfectly centered.
+  const screenX = naturalRect.left + viewState.x + (item.x/canvas.width) * naturalRect.width * viewState.scale;
+  const screenY = naturalRect.top + viewState.y + (item.y/canvas.height) * naturalRect.height * viewState.scale;
   const size = 90;
   const ring = document.createElement('div');
   ring.className = 'hintRing';
-  ring.style.left = (areaRect.left + areaRect.width/2 - size/2) + 'px';
-  ring.style.top = (areaRect.top + areaRect.height/2 - size/2) + 'px';
+  ring.style.left = (screenX - size/2) + 'px';
+  ring.style.top = (screenY - size/2) + 'px';
   ring.style.width = size + 'px';
   ring.style.height = size + 'px';
   document.body.appendChild(ring);
@@ -543,9 +584,6 @@ function showHintRing(){
 
 function useHintOnItem(item){
   const prevView = {x:viewState.x, y:viewState.y, scale:viewState.scale};
-  // CONFIRMED FIX: zoom in further (was 3x, now max 4x) and circle the item
-  // with a pulsing ring for a beat before picking it up, so the player
-  // actually has time to see exactly where it was.
   const target = screenCenterForItem(item, 4);
 
   canvas.style.transition = 'transform 0.4s ease';
@@ -555,7 +593,7 @@ function useHintOnItem(item){
 
   setTimeout(() => {
     canvas.style.transition = '';
-    const ring = showHintRing();
+    const ring = showHintRing(item);
     setTimeout(() => {
       ring.remove();
       startFoundAnimation(item);
