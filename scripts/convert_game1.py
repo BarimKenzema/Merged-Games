@@ -23,6 +23,24 @@ def rect_to_polygon(rx, ry):
         {"x": -rx, "y": ry},
     ]
 
+def load_ledger(path):
+    """Returns the set of puzzle IDs already converted in past runs (across
+    ALL workflow runs, base-APK or bulk-pack alike, since both write to the
+    same committed ledger file). Missing file = empty set (first-ever run)."""
+    if not path:
+        return set()
+    try:
+        with open(path) as f:
+            return set(line.strip() for line in f if line.strip())
+    except FileNotFoundError:
+        return set()
+
+def append_ledger(path, puzzle_id):
+    if not path:
+        return
+    with open(path, 'a') as f:
+        f.write(puzzle_id + '\n')
+
 def _neighbor(arr, dy, dx):
     pad_width = ((1,1),(1,1)) + ((0,0),) * (arr.ndim - 2)
     padded = np.pad(arr, pad_width, mode='edge')
@@ -69,15 +87,11 @@ def _dilate_mask(mask_bool, px=1):
     return out
 
 def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=0):
-    """CONFIRMED FIX: 'vertices' is a triangulated MESH vertex list (paired
-    with 'triangles'), NOT an ordered perimeter outline. Drawing one polygon
-    directly from raw vertex order only worked by coincidence for simple
-    convex shapes - for anything concave/complex it draws lines spiking
-    outside the real silhouette, which was the root cause of creases, leaked
-    neighbor fragments, AND ruined/empty thumbnails all at once (confirmed
-    visually: filling actual triangles cleanly covers the real object, with
-    genuine neighbor-sprite fragments correctly falling OUTSIDE the filled
-    area, exactly as intended)."""
+    """CONFIRMED FIX (see project history): 'vertices' is a triangulated MESH
+    vertex list (paired with 'triangles'), not a perimeter outline. Filling
+    actual triangles + binary threshold (dilate_px=0) is the confirmed-final
+    fix for both the fragment/overlap bug and the crease bug. Do not change
+    dilate_px back to a nonzero default without re-reading that history."""
     if not vertices_str or not triangles_str:
         return cropped_rgba
     w, h = cropped_rgba.size
@@ -134,23 +148,10 @@ def make_bg_preview(source_img, rect, out_path, max_dim=1000):
 
 def load_all_pages(tmp_dir):
     """CONFIRMED FIX: some puzzles split their atlas across MULTIPLE numbered
-    pages (e.g. `0.webp`/`0.plist` PLUS `1.webp`/`1.plist`), because a plist
-    can only reference frames inside its own paired webp - if the background
-    didn't fit efficiently alongside item art, the original game split it
-    onto a second page. Confirmed via direct zip inspection of puzzle 355765:
-    all 75 item frames live in `0.webp`/`0.plist`, but the ENTIRE background
-    frame (`p355765_background`) lives alone in `1.webp`/`1.plist`. The old
-    code only ever looked at page 0, so puzzles like this always failed with
-    'No frame ending in _background found' even though the background frame
-    genuinely exists, just on a different page. This function discovers and
-    merges ALL numbered pages generically (not just page 1 specifically), in
-    case any puzzle also splits item frames across pages.
-
-    Returns:
-      frames: merged dict of frame_name -> frame_info (same shape as before)
-      frame_page: dict of frame_name -> which page number it came from
-      page_images: dict of page number -> opened PIL RGBA image for that page
-    """
+    pages (e.g. `0.webp`/`0.plist` PLUS `1.webp`/`1.plist`). Confirmed via
+    direct zip inspection of puzzle 355765: all item frames live on page 0,
+    but the entire background frame lives alone on page 1. This function
+    discovers and merges ALL numbered pages generically."""
     frames = {}
     frame_page = {}
     page_images = {}
@@ -172,7 +173,7 @@ def load_all_pages(tmp_dir):
         page_images[page_num] = Image.open(webp_path).convert("RGBA")
     return frames, frame_page, page_images
 
-def convert_one(zip_path, out_root):
+def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
     base_name = os.path.splitext(os.path.basename(zip_path))[0]
     tmp_dir = f"/tmp/g1_{base_name}"
     os.makedirs(tmp_dir, exist_ok=True)
@@ -183,6 +184,7 @@ def convert_one(zip_path, out_root):
 
     frames, frame_page, page_images = load_all_pages(tmp_dir)
     if not frames:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         raise ValueError(f"No plist/webp atlas pages found for {zip_path}")
 
     with open(bin_path, 'rb') as f:
@@ -192,9 +194,15 @@ def convert_one(zip_path, out_root):
 
     bg_key = next((k for k in frames if k.endswith('_background')), None)
     if bg_key is None:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         raise ValueError(f"No frame ending in '_background' found for {zip_path}")
     m = re.match(r'p(\d+)_background$', bg_key)
     puzzle_id = m.group(1) if m else bg_key.rsplit('_background', 1)[0].lstrip('p')
+
+    if ledger is not None and puzzle_id in ledger:
+        print(f"SKIPPED (duplicate, already in ledger) {zip_path}: puzzle_id={puzzle_id}")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return
 
     bg_rect = parse_plist_rect(frames[bg_key]['textureRect'])
     bg_source_img = page_images[frame_page[bg_key]]
@@ -276,7 +284,11 @@ def convert_one(zip_path, out_root):
     puzzle_folder_name = f"game1_{puzzle_id}"
     out_dir = os.path.join(out_root, puzzle_folder_name)
     os.makedirs(out_dir, exist_ok=True)
-    new_atlas.save(os.path.join(out_dir, "atlas.webp"), lossless=True, quality=100, method=6)
+    # Switched from lossless to lossy (quality=90): the crease bug was
+    # confirmed caused by mask SHAPE, not WebP compression (Theory 2 in
+    # project history was tested and disproven). Lossless was leftover
+    # caution from that disproven theory. Safe to shrink file size now.
+    new_atlas.save(os.path.join(out_dir, "atlas.webp"), quality=90, method=6)
 
     make_square_thumbnail(new_atlas, new_bg_rect, os.path.join(out_dir, "thumb.jpg"))
     make_bg_preview(new_atlas, new_bg_rect, os.path.join(out_dir, "bg.jpg"))
@@ -296,16 +308,22 @@ def convert_one(zip_path, out_root):
     with open(os.path.join(out_dir, "data.json"), 'w') as f:
         json.dump(data, f)
 
-    shutil.rmtree(tmp_dir)
+    if ledger is not None:
+        append_ledger(ledger_path, puzzle_id)
+        ledger.add(puzzle_id)
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
     print(f"Converted {zip_path} -> {out_dir}")
 
 if __name__ == "__main__":
     raw_dir = sys.argv[1]
     out_root = sys.argv[2]
+    ledger_path = sys.argv[3] if len(sys.argv) > 3 else None
+    ledger = load_ledger(ledger_path)
     os.makedirs(out_root, exist_ok=True)
     zips = glob.glob(os.path.join(raw_dir, "*"))
     for z in zips:
         try:
-            convert_one(z, out_root)
+            convert_one(z, out_root, ledger, ledger_path)
         except Exception as e:
             print(f"FAILED {z}: {e}")
