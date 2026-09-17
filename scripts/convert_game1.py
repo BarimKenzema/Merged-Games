@@ -26,16 +26,6 @@ def _neighbor(arr, dy, dx):
     return padded[1+dy:1+dy+h, 1+dx:1+dx+w, ...]
 
 def decontaminate_edges(img_rgba, alpha_threshold=250, iterations=8):
-    """CONFIRMED DIAGNOSIS: polygon mask shape is pixel-accurate (verified
-    visually against real art), so the visible 'crease' around items is NOT
-    a shape/alpha-cutoff problem. It's classic edge color contamination -
-    semi-transparent border pixels in the source art carry RGB blended with
-    whatever background the original asset was authored against, which
-    becomes a visible fringe/halo once composited onto OUR different
-    background. This fixes it by growing the nearest fully-opaque interior
-    color outward into the semi-transparent border, iteratively, WITHOUT
-    touching alpha at all - a standard "de-halo" / color decontamination
-    pass used for exactly this class of bug."""
     arr = np.array(img_rgba).astype(np.float32)
     rgb = arr[:,:,:3].copy()
     alpha = arr[:,:,3]
@@ -62,7 +52,7 @@ def decontaminate_edges(img_rgba, alpha_threshold=250, iterations=8):
 
 def _shift(arr, dy, dx):
     padded = np.pad(arr, ((1,1),(1,1)), mode='constant', constant_values=False)
-    h, w = arr.shape
+    h, w = arr.shape[0], arr.shape[1]
     return padded[1+dy:1+dy+h, 1+dx:1+dx+w]
 
 def _dilate_mask(mask_bool, px=1):
@@ -75,22 +65,6 @@ def _dilate_mask(mask_bool, px=1):
     return out
 
 def apply_polygon_mask(cropped_rgba, vertices_str, factor=4, dilate_px=1):
-    """CONFIRMED DIAGNOSIS (this pass): mask SHAPE is pixel-accurate (verified
-    against real art via overlay test) and edge COLOR contamination is
-    already fixed (decontaminate_edges). The remaining visible 'crease' is
-    caused by HOW the mask was being applied: Image.composite() with a
-    gradual/antialiased supersampled mask BLENDS our mask's own taper
-    together with the source art's OWN separate, already-soft alpha edge -
-    two independent gradual tapers multiplied together produce an
-    unnaturally wide combined semi-transparent band, wider than either the
-    artist's real edge or our polygon shape implies. That extra-wide,
-    doubly-soft band is what lets background bleed through as a visible
-    ring, worse the more you zoom in.
-    Fix: threshold the (still supersampled, still smooth-shaped) mask into a
-    clean BINARY in/out cut with a tiny 1px dilation safety margin, so the
-    art's own native alpha/antialiasing is preserved completely untouched
-    inside the shape, and only genuinely-outside neighbor content gets
-    zeroed - no more double-tapering."""
     if not vertices_str:
         return cropped_rgba
     w, h = cropped_rgba.size
@@ -98,7 +72,7 @@ def apply_polygon_mask(cropped_rgba, vertices_str, factor=4, dilate_px=1):
     big_mask = Image.new('L', (w*factor, h*factor), 0)
     ImageDraw.Draw(big_mask).polygon(pts, fill=255)
     small_mask = big_mask.resize((w, h), Image.BOX)
-    mask_bool = np.array(small_mask) > 10  # tolerant: any real polygon coverage counts as "inside"
+    mask_bool = np.array(small_mask) > 10
     if dilate_px > 0:
         mask_bool = _dilate_mask(mask_bool, dilate_px)
     arr = np.array(cropped_rgba)
@@ -141,6 +115,29 @@ def make_bg_preview(source_img, rect, out_path, max_dim=1000):
     resized = cropped.resize(new_size, Image.LANCZOS) if scale < 1.0 else cropped
     resized.save(out_path, "JPEG", quality=85)
 
+def get_oriented_crop(source_img, info, rect):
+    """NEW FIX (theory, being tested): frames flagged 'textureRotated' in the
+    plist are stored rotated 90 degrees WITHIN the atlas by TexturePacker,
+    but that frame's 'vertices' polygon data is defined in the sprite's
+    ORIGINAL, unrotated local space. We've never handled this field before.
+    Failing to un-rotate here means the polygon mask and the actual pixel
+    content are in two different orientations - with the OLD soft/blended
+    mask this just smeared into a fuzzy "crease", but the new hard-threshold
+    mask (needed to fix creases) now cuts EXACTLY where they truly overlap,
+    which can be partial or zero for a misoriented frame - worse on small
+    thumbnails where misalignment consumes a much bigger fraction of the
+    image. Un-rotating here should restore correct alignment.
+    NOTE: rotation DIRECTION is a best-guess based on the standard
+    TexturePacker convention (stored clockwise, so we rotate back
+    counter-clockwise here via PIL's rotate(90)). If content is now correct
+    but appears sideways/upside-down, flip this to rotate(-90).
+    """
+    x, y, w, h = [int(v) for v in rect]
+    crop = source_img.crop((x, y, x + w, y + h))
+    if info.get('textureRotated'):
+        crop = crop.rotate(90, expand=True)
+    return crop
+
 def convert_one(zip_path, out_root):
     base_name = os.path.splitext(os.path.basename(zip_path))[0]
     tmp_dir = f"/tmp/g1_{base_name}"
@@ -168,24 +165,20 @@ def convert_one(zip_path, out_root):
     puzzle_id = m.group(1) if m else bg_key.rsplit('_background', 1)[0].lstrip('p')
 
     bg_rect = parse_plist_rect(frames[bg_key]['textureRect'])
-    canvas_width = bg_rect[2]
-    canvas_height = bg_rect[3]
 
     source_img = Image.open(webp_path).convert("RGBA")
 
+    rotated_count = sum(1 for k, v in frames.items() if v.get('textureRotated'))
+    print(f"  [{puzzle_id}] frames with textureRotated=True: {rotated_count} / {len(frames)}")
+
     masked_images = {}
-    bx, by, bw, bh = [int(v) for v in bg_rect]
-    masked_images[bg_key] = source_img.crop((bx, by, bx + bw, by + bh))
+    masked_images[bg_key] = get_oriented_crop(source_img, frames[bg_key], bg_rect)
+    canvas_width, canvas_height = masked_images[bg_key].size
 
     def build_masked(key):
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
-        x, y, w, h = [int(v) for v in rect]
-        crop = source_img.crop((x, y, x + w, y + h))
-        # Order matters: decontaminate edge colors FIRST (using the sprite's
-        # own native alpha to know what's "opaque" vs "edge"), THEN apply our
-        # polygon overlap-mask on top (which only ever removes alpha further,
-        # never adds it back, so decontamination's work is preserved).
+        crop = get_oriented_crop(source_img, info, rect)
         crop = decontaminate_edges(crop)
         crop = apply_polygon_mask(crop, info.get('vertices'))
         masked_images[key] = crop
