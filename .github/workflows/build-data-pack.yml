@@ -1,0 +1,88 @@
+name: Build Data Pack (bulk conversion)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Max NEW puzzles to convert PER GAME in this run'
+        required: false
+        default: '500'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install msgpack UnityPy texture2ddecoder Pillow numpy
+
+      - name: Select next batch of NOT-yet-converted puzzles
+        run: |
+          python3 scripts/filter_new_urls.py game1 download_list.txt converted_ids_game1.txt selected_game1.txt "${{ github.event.inputs.batch_size }}"
+          python3 scripts/filter_new_urls.py game2 yolo_download_list.txt converted_ids_game2.txt selected_game2.txt "${{ github.event.inputs.batch_size }}"
+
+      - name: Download Game 1 puzzles
+        run: |
+          mkdir -p raw_game1
+          while read -r fname url; do
+            echo "Downloading $url -> raw_game1/$fname"
+            curl -L --fail -o "raw_game1/$fname" "$url" || echo "FAILED: $url"
+          done < selected_game1.txt
+
+      - name: Download Game 2 puzzles
+        run: |
+          mkdir -p raw_game2
+          while read -r id url; do
+            echo "Downloading $url -> raw_game2/$id"
+            curl -L --fail -o "raw_game2/$id" "$url" || echo "FAILED: $url"
+          done < selected_game2.txt
+
+      - name: Convert Game 1 puzzles (ledger-aware: skips + registers automatically)
+        run: python3 scripts/convert_game1.py raw_game1 bulk_out/puzzles converted_ids_game1.txt
+
+      - name: Convert Game 2 puzzles (ledger-aware: skips + registers automatically)
+        run: python3 scripts/convert_game2.py raw_game2 bulk_out/puzzles converted_ids_game2.txt
+
+      - name: Generate this pack's manifest (fresh proportional shuffle, this pack only)
+        run: python3 scripts/generate_manifest.py bulk_out/puzzles bulk_out/puzzles/manifest.json
+
+      - name: Determine next pack number
+        run: |
+          NEXT=$(cat next_pack_number.txt 2>/dev/null || echo 1)
+          PACK_NAME=$(printf "pack_%03d" "$NEXT")
+          echo "PACK_NAME=$PACK_NAME" >> $GITHUB_ENV
+          echo "$((NEXT+1))" > next_pack_number.txt
+
+      - name: Assemble pack folder and zip it
+        run: |
+          mkdir -p packs_ready
+          mv bulk_out/puzzles "packs_ready/${PACK_NAME}"
+          cd packs_ready
+          zip -r "${PACK_NAME}.zip" "${PACK_NAME}"
+
+      - name: Commit updated ledgers and pack counter
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add converted_ids_game1.txt converted_ids_game2.txt next_pack_number.txt
+          git commit -m "Add ${PACK_NAME}: register new puzzle IDs" || echo "No changes to commit"
+          git pull --rebase
+          git push
+
+      - name: Upload pack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACK_NAME }}
+          path: packs_ready/${{ env.PACK_NAME }}.zip
