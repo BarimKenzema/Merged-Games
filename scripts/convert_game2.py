@@ -53,7 +53,7 @@ def parse_sprite_name(name):
         "rotation": rotation, "x": x, "y": y, "layer": layer, "name": name
     }
 
-def make_square_thumbnail(source_img, rect, out_path, size=400, pad_color=(34,34,34)):
+def make_square_thumbnail(source_img, rect, out_path, size=300, pad_color=(34,34,34)):
     x, y, w, h = rect
     cropped = source_img.crop((x, y, x + w, y + h)).convert("RGB")
     scale = max(size / w, size / h)
@@ -62,7 +62,7 @@ def make_square_thumbnail(source_img, rect, out_path, size=400, pad_color=(34,34
     left = (new_w - size) // 2
     top = (new_h - size) // 2
     canvas = resized.crop((left, top, left + size, top + size))
-    canvas.save(out_path, "JPEG", quality=80)
+    canvas.save(out_path, "WEBP", quality=80, method=6)
 
 def make_bg_preview(source_img, rect, out_path, max_dim=1000):
     x, y, w, h = rect
