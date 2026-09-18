@@ -203,7 +203,7 @@ def make_bg_preview(source_img, rect, out_path, max_dim=1000):
     scale = min(1.0, max_dim / max(w, h))
     new_size = (max(1,int(w*scale)), max(1,int(h*scale)))
     resized = cropped.resize(new_size, Image.LANCZOS) if scale < 1.0 else cropped
-    resized.save(out_path, "JPEG", quality=85)
+    resized.save(out_path, "WEBP", quality=80, method=6)
 
 def load_all_pages(tmp_dir):
     """CONFIRMED FIX: some puzzles split their atlas across MULTIPLE numbered
