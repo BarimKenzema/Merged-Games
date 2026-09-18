@@ -49,10 +49,10 @@ jobs:
             curl -L --fail -o "raw_game2/$id" "$url" || echo "FAILED: $url"
           done < selected_game2.txt
 
-      - name: Convert Game 1 puzzles (ledger-aware: skips + registers automatically)
+      - name: Convert Game 1 puzzles - ledger-aware, skips and registers automatically
         run: python3 scripts/convert_game1.py raw_game1 bulk_out/puzzles converted_ids_game1.txt
 
-      - name: Convert Game 2 puzzles (ledger-aware: skips + registers automatically)
+      - name: Convert Game 2 puzzles - ledger-aware, skips and registers automatically
         run: python3 scripts/convert_game2.py raw_game2 bulk_out/puzzles converted_ids_game2.txt
 
       - name: Generate this pack's manifest (fresh proportional shuffle, this pack only)
