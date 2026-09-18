@@ -350,7 +350,7 @@ def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
     # Reverted to lossy: switching to lossless did NOT fix the crease issue
     # (confirmed by direct user test), so there's no reason to pay its
     # size/build-time cost while we diagnose the real cause via CREASE_DEBUG_DIR.
-    new_atlas.save(os.path.join(out_dir, "atlas.webp"), quality=90, method=6)
+    new_atlas.save(os.path.join(out_dir, "atlas.webp"), quality=40, method=6)
 
     make_square_thumbnail(new_atlas, new_bg_rect, os.path.join(out_dir, "thumb.jpg"))
     make_bg_preview(new_atlas, new_bg_rect, os.path.join(out_dir, "bg.jpg"))
