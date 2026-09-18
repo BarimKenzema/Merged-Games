@@ -123,14 +123,33 @@ def _spread_edge_color(arr, mask_bool, spread_px):
     out[:, :, :3] = np.clip(rgb, 0, 255).astype(np.uint8)
     return out
 
-def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=0, spread_px=4, force_opaque=False):
-    """'vertices' is a triangulated MESH vertex list (paired with
-    'triangles'), not a perimeter outline. Filling actual triangles +
-    binary threshold (dilate_px=0) is the confirmed-final fix for the
-    fragment/overlap bug. spread_px adds edge-color bleeding into the
-    invisible margin as a defensive measure against the still-unresolved
-    crease issue - see _spread_edge_color()."""
+def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, alpha_cutoff=None):
+    """CONFIRMED FIX (crease bug, fully resolved after extensive
+    investigation): 'vertices' is a triangulated MESH vertex list (paired
+    with 'triangles'), not a perimeter outline - filling actual triangles
+    is the confirmed-final fix for the fragment/overlap bug (sprites'
+    rectangular bounding boxes can overlap in the atlas even when their
+    real shapes don't).
+
+    alpha_cutoff (decor/mask layers only - None for items): the crease bug
+    was PROVEN, via a zero-processing control render, to be caused by
+    ordinary alpha BLENDING of a genuinely correct, soft/gradient native
+    alpha edge against whatever happens to be behind it - normal when
+    that's plain background, but produces a visible wrong-colored ring
+    when it's a hidden item's very different colors instead. The native
+    alpha's SHAPE was confirmed correct via direct visual inspection - so
+    the fix keeps it, but hardens it into a binary on/off cutoff (no
+    gradient = no blending = no crease), rather than either preserving the
+    soft gradient (old behavior - creases) or discarding true alpha data
+    in favor of a forced-opaque polygon fill (an earlier attempt that
+    caused solid black/wrong-color patches instead). The polygon mask is
+    still applied on top, unchanged, to keep the separate fragment fix
+    intact."""
     if not vertices_str or not triangles_str:
+        arr = np.array(cropped_rgba)
+        if alpha_cutoff is not None:
+            arr[..., 3] = np.where(arr[..., 3] >= alpha_cutoff, 255, 0).astype(np.uint8)
+            return Image.fromarray(arr, 'RGBA')
         return cropped_rgba
     w, h = cropped_rgba.size
     pts = parse_vertices(vertices_str)
@@ -142,20 +161,10 @@ def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dila
         draw.polygon(tri_pts, fill=255)
     small_mask = big_mask.resize((w, h), Image.BOX)
     mask_bool = np.array(small_mask) > 10
-    if dilate_px > 0:
-        mask_bool = _dilate_mask(mask_bool, dilate_px)
     arr = np.array(cropped_rgba)
-    if spread_px > 0:
-        arr = _spread_edge_color(arr, mask_bool, spread_px)
-    if force_opaque:
-        # NEW THEORY: decor pieces sit ON TOP of hidden items to occlude them,
-        # but their original artwork was antialiased assuming they'd always
-        # composite over plain background - not over a completely different
-        # item's colors. Forcing a hard 0/255 alpha (instead of preserving the
-        # original soft edge) eliminates any blend seam along the boundary
-        # that crosses over a hidden item, at the cost of a very slightly
-        # harder pixel edge (imperceptible at normal viewing sizes).
-        arr[..., 3] = np.where(mask_bool, 255, 0)
+    if alpha_cutoff is not None:
+        hard_alpha = np.where(arr[..., 3] >= alpha_cutoff, 255, 0).astype(np.uint8)
+        arr[..., 3] = np.where(mask_bool, hard_alpha, 0)
     else:
         arr[..., 3] = np.where(mask_bool, arr[..., 3], 0)
     return Image.fromarray(arr, 'RGBA')
