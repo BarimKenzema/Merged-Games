@@ -277,7 +277,13 @@ def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
         # garbage/black color far deeper than 8px from any real edge.
         # Using the crop's own max dimension guarantees the color-repair
         # pass fully reaches every such pocket before it's locked opaque.
-        decontam_iters = max(w, h) if force_opaque else 8
+        # Manhattan-distance fix: reaching the farthest corner of a W x H
+        # rectangle from a single seed pixel can require up to W+H steps
+        # (not just max(W,H)) when growing one pixel per iteration in the
+        # 4 cardinal directions. max(w,h) was enough for roughly-square
+        # shapes (confirmed fixed) but left far/deep pockets uncovered in
+        # elongated or complex decor shapes (still showing raw black data).
+        decontam_iters = (w + h) if force_opaque else 8
         crop = decontaminate_edges(crop, iterations=decontam_iters)
         crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'), force_opaque=force_opaque)
         masked_images[key] = crop
