@@ -352,8 +352,8 @@ def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
     # size/build-time cost while we diagnose the real cause via CREASE_DEBUG_DIR.
     new_atlas.save(os.path.join(out_dir, "atlas.webp"), quality=40, method=6)
 
-    "thumbnail": "thumb.jpg",
-    "background": "bg.jpg",
+    make_square_thumbnail(new_atlas, new_bg_rect, os.path.join(out_dir, "thumb.webp"))
+    make_bg_preview(new_atlas, new_bg_rect, os.path.join(out_dir, "bg.webp"))
 
     data = {
         "puzzle_id": puzzle_folder_name,
