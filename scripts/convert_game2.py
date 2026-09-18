@@ -201,15 +201,15 @@ def convert_one(bundle_path, out_root, ledger=None, ledger_path=None):
     # size, independent of the Game 1 crease investigation.
     atlas.save(os.path.join(out_dir, "atlas.webp"), quality=40, method=6)
 
-    make_square_thumbnail(atlas, bg_rect, os.path.join(out_dir, "thumb.jpg"))
-    make_bg_preview(atlas, bg_rect, os.path.join(out_dir, "bg.jpg"))
+    make_square_thumbnail(atlas, bg_rect, os.path.join(out_dir, "thumb.webp"))
+    make_bg_preview(atlas, bg_rect, os.path.join(out_dir, "bg.webp"))
 
     data = {
         "puzzle_id": puzzle_folder_name,
         "source_game": "game2",
         "atlas": "atlas.webp",
-        "thumbnail": "thumb.jpg",
-        "background": "bg.jpg",
+        "thumbnail": "thumb.webp",
+        "background": "bg.webp",
         "canvas_width": canvas_w,
         "canvas_height": canvas_h,
         "background_rect": bg_rect,
