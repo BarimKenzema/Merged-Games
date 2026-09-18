@@ -268,7 +268,17 @@ def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
         x, y, w, h = [int(v) for v in rect]
         page_img = page_images[frame_page[key]]
         crop = page_img.crop((x, y, x + w, y + h))
-        crop = decontaminate_edges(crop)
+        # For decor (force_opaque): the default 8-iteration decontamination
+        # only repairs color a few pixels deep, which was enough when only a
+        # thin antialiased rim needed fixing. But force_opaque makes EVERY
+        # pixel inside the polygon permanently visible, including deep
+        # "never meant to be seen" fully-transparent pockets inside complex
+        # decor shapes (gaps between chair legs, etc.) that may carry
+        # garbage/black color far deeper than 8px from any real edge.
+        # Using the crop's own max dimension guarantees the color-repair
+        # pass fully reaches every such pocket before it's locked opaque.
+        decontam_iters = max(w, h) if force_opaque else 8
+        crop = decontaminate_edges(crop, iterations=decontam_iters)
         crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'), force_opaque=force_opaque)
         masked_images[key] = crop
 
