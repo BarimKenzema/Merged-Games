@@ -123,7 +123,7 @@ def _spread_edge_color(arr, mask_bool, spread_px):
     out[:, :, :3] = np.clip(rgb, 0, 255).astype(np.uint8)
     return out
 
-def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=0, spread_px=4):
+def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dilate_px=0, spread_px=4, force_opaque=False):
     """'vertices' is a triangulated MESH vertex list (paired with
     'triangles'), not a perimeter outline. Filling actual triangles +
     binary threshold (dilate_px=0) is the confirmed-final fix for the
