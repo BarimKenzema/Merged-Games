@@ -271,30 +271,14 @@ def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
     masked_images[bg_key] = bg_source_img.crop((bx, by, bx + bw, by + bh))
     canvas_width, canvas_height = masked_images[bg_key].size
 
-    def build_masked(key, force_opaque=False):
+    def build_masked(key, alpha_cutoff=None):
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
         x, y, w, h = [int(v) for v in rect]
         page_img = page_images[frame_page[key]]
         crop = page_img.crop((x, y, x + w, y + h))
-        # For decor (force_opaque): the default 8-iteration decontamination
-        # only repairs color a few pixels deep, which was enough when only a
-        # thin antialiased rim needed fixing. But force_opaque makes EVERY
-        # pixel inside the polygon permanently visible, including deep
-        # "never meant to be seen" fully-transparent pockets inside complex
-        # decor shapes (gaps between chair legs, etc.) that may carry
-        # garbage/black color far deeper than 8px from any real edge.
-        # Using the crop's own max dimension guarantees the color-repair
-        # pass fully reaches every such pocket before it's locked opaque.
-        # Manhattan-distance fix: reaching the farthest corner of a W x H
-        # rectangle from a single seed pixel can require up to W+H steps
-        # (not just max(W,H)) when growing one pixel per iteration in the
-        # 4 cardinal directions. max(w,h) was enough for roughly-square
-        # shapes (confirmed fixed) but left far/deep pockets uncovered in
-        # elongated or complex decor shapes (still showing raw black data).
-        decontam_iters = (w + h) if force_opaque else 8
-        crop = decontaminate_edges(crop, iterations=decontam_iters)
-        crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'), force_opaque=force_opaque)
+        crop = decontaminate_edges(crop)
+        crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'), alpha_cutoff=alpha_cutoff)
         masked_images[key] = crop
 
     item_meta = []
