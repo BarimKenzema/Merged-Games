@@ -262,14 +262,14 @@ def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
     masked_images[bg_key] = bg_source_img.crop((bx, by, bx + bw, by + bh))
     canvas_width, canvas_height = masked_images[bg_key].size
 
-    def build_masked(key):
+    def build_masked(key, force_opaque=False):
         info = frames[key]
         rect = parse_plist_rect(info['textureRect'])
         x, y, w, h = [int(v) for v in rect]
         page_img = page_images[frame_page[key]]
         crop = page_img.crop((x, y, x + w, y + h))
         crop = decontaminate_edges(crop)
-        crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'))
+        crop = apply_polygon_mask(crop, info.get('vertices'), info.get('triangles'), force_opaque=force_opaque)
         masked_images[key] = crop
 
     item_meta = []
