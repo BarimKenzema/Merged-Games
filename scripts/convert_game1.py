@@ -296,7 +296,7 @@ def convert_one(zip_path, out_root, ledger=None, ledger_path=None):
         key = f"p{puzzle_id}_{layer['name']}"
         if key not in frames:
             continue
-        build_masked(key)
+        build_masked(key, force_opaque=True)
         decor_meta.append({
             "key": key, "x": layer['x'], "y": canvas_height - layer['y'],
             "rotation": 0, "zOrder": layer.get('zOrder', 0)
