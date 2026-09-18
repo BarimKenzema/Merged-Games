@@ -4,12 +4,22 @@ on:
   workflow_dispatch:
     inputs:
       batch_size:
-        description: 'Max NEW puzzles to convert PER GAME in this run'
+        description: 'Total NEW puzzles (across BOTH games combined) to convert this run'
         required: false
-        default: '500'
+        default: '330'
+  schedule:
+    - cron: '*/44 * * * *'
 
 permissions:
   contents: write
+
+# Prevents overlapping runs: if a scheduled trigger fires while a previous
+# run is still in progress, it queues and starts immediately after instead
+# of running in parallel. This is what makes the schedule safe regardless
+# of exact run duration or cron's inherent timing imprecision.
+concurrency:
+  group: data-pack-pipeline
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -28,10 +38,24 @@ jobs:
       - name: Install Python dependencies
         run: pip install msgpack UnityPy texture2ddecoder Pillow numpy
 
-      - name: Select next batch of NOT-yet-converted puzzles
+      - name: Determine total batch size for this run
         run: |
-          python3 scripts/filter_new_urls.py game1 download_list.txt converted_ids_game1.txt selected_game1.txt "${{ github.event.inputs.batch_size }}"
-          python3 scripts/filter_new_urls.py game2 yolo_download_list.txt converted_ids_game2.txt selected_game2.txt "${{ github.event.inputs.batch_size }}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "TOTAL_BATCH=330" >> $GITHUB_ENV
+          else
+            echo "TOTAL_BATCH=${{ github.event.inputs.batch_size }}" >> $GITHUB_ENV
+          fi
+
+      - name: Compute proportional per-game split based on CURRENT remaining pool sizes
+        run: |
+          python3 scripts/compute_batch_split.py "$TOTAL_BATCH" download_list.txt converted_ids_game1.txt yolo_download_list.txt converted_ids_game2.txt | tee split_output.txt
+          grep '^GAME1_BATCH=' split_output.txt >> $GITHUB_ENV
+          grep '^GAME2_BATCH=' split_output.txt >> $GITHUB_ENV
+
+      - name: Select this run's puzzles
+        run: |
+          python3 scripts/filter_new_urls.py game1 download_list.txt converted_ids_game1.txt selected_game1.txt "$GAME1_BATCH"
+          python3 scripts/filter_new_urls.py game2 yolo_download_list.txt converted_ids_game2.txt selected_game2.txt "$GAME2_BATCH"
 
       - name: Download Game 1 puzzles
         run: |
