@@ -147,7 +147,17 @@ def apply_polygon_mask(cropped_rgba, vertices_str, triangles_str, factor=4, dila
     arr = np.array(cropped_rgba)
     if spread_px > 0:
         arr = _spread_edge_color(arr, mask_bool, spread_px)
-    arr[..., 3] = np.where(mask_bool, arr[..., 3], 0)
+    if force_opaque:
+        # NEW THEORY: decor pieces sit ON TOP of hidden items to occlude them,
+        # but their original artwork was antialiased assuming they'd always
+        # composite over plain background - not over a completely different
+        # item's colors. Forcing a hard 0/255 alpha (instead of preserving the
+        # original soft edge) eliminates any blend seam along the boundary
+        # that crosses over a hidden item, at the cost of a very slightly
+        # harder pixel edge (imperceptible at normal viewing sizes).
+        arr[..., 3] = np.where(mask_bool, 255, 0)
+    else:
+        arr[..., 3] = np.where(mask_bool, arr[..., 3], 0)
     return Image.fromarray(arr, 'RGBA')
 
 def pack_images(images_dict, padding=2):
