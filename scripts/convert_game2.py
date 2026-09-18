@@ -199,7 +199,7 @@ def convert_one(bundle_path, out_root, ledger=None, ledger_path=None):
     # sprites come pre-masked from the original Unity asset alpha - no custom
     # polygon cutout is applied by us here). This switch is purely about file
     # size, independent of the Game 1 crease investigation.
-    atlas.save(os.path.join(out_dir, "atlas.webp"), quality=90, method=6)
+    atlas.save(os.path.join(out_dir, "atlas.webp"), quality=40, method=6)
 
     make_square_thumbnail(atlas, bg_rect, os.path.join(out_dir, "thumb.jpg"))
     make_bg_preview(atlas, bg_rect, os.path.join(out_dir, "bg.jpg"))
