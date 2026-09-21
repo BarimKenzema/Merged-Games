@@ -7,9 +7,8 @@ on:
         description: 'Total NEW puzzles (across BOTH games combined) to convert this run'
         required: false
         default: '330'
-  # Uncomment the two lines below to enable automatic runs every 44 minutes.
-  # schedule:
-  #   - cron: '*/44 * * * *'
+  schedule:
+    - cron: '*/44 * * * *'
 
 permissions:
   contents: write
